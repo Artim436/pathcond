@@ -4,6 +4,7 @@ import torch.nn as nn
 from tqdm import tqdm
 import math
 from utils import _param_start_offsets
+from rescalin
 
 
 
@@ -141,7 +142,7 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
 
     # Maintain BZ incrementally: BZ = B @ Z
     BZ = torch.zeros(n_params, dtype=dtype, device=device)    
-    OBJ = [function_F(n_params, BZ, diag_G)]
+    OBJ = [function_F(n_params, BZ, diag_G).item()]
     print(f"Initial obj: {OBJ[0]:.6f}")
     for k in range(n_iter):
         delta_total = 0.0
@@ -159,20 +160,22 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
 
             card_in_h  = int(in_h_t.numel())
             card_out_h = int(out_h_t.numel())
-
+            print("card_in_h, card_out_h, card_other_h", card_in_h, card_out_h, int(other_h_t.numel()))
             # Leave-one-out energy vector: exp( (B @ Z) - b_h * Z[h] ) * diag_G
             # Using the maintained BZ avoids a full matmul here.
             Y_h = BZ - b_h * Z[h]  # shape: [m]
-            y_bar = torch.max((Y_h))  # for numerical stability
+            y_bar = torch.max(Y_h)  # for numerical stability
+            print("y_bar", y_bar)
             E = torch.exp(Y_h - y_bar) * diag_G  # shape: [m]
 
             # Polynomial coefficients components
             # A_h is scalar (int), others are sums over selected rows of E
-            A_h = (card_out_h - card_in_h)
-
-            B_h = E[out_h_t].sum() 
+            A_h = (card_in_h - card_out_h)
+            B_h = E[out_h_t].sum()
+            
             C_h = E[in_h_t].sum()
             D_h = E[other_h_t].sum()
+
 
             # Polynomial: P(X) = a*X^2 + b*X + c where
             a = B_h * (A_h + n_params_tensor)
@@ -180,26 +183,30 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
             c = C_h * (A_h - n_params_tensor)
 
 
+            if a <= 0.0:
+                raise ValueError(f"Non-positive a={a} in quadratic for neuron {h} at iter {k}, A_h={A_h}, B_h={B_h}, C_h={C_h}, D_h={D_h}")
+            if c >= 0.0:
+                raise ValueError(f"Non-negative c={c} in quadratic for neuron {h} at iter {k}, A_h={A_h}, B_h={B_h}, C_h={C_h}, D_h={D_h}")
 
-            z_new = 0.0  # default fallback if no positive real root
 
             # Degenerate to linear if a ~ 0
-            if abs(a) < 1e-40:
-                if abs(b) >= 1e-40:
+            if abs(a) < 1e-20:
+                if abs(b) >= 1e-20:
                     x = -c / b
                     if x > 0.0:
                         z_new = torch.log(x)
                     else:
                         raise ValueError(f"Non-positive root {x} in linear case for neuron {h} at iter {k}, a={a}, b={b}, c={c}")
                 else:
-                    if abs(c) < 1e-40:
+                    if abs(c) < 1e-20:
                         raise ValueError(f"a = {a}, b = {b}, c = {c} all ~ 0 for neuron {h} at iter {k}")
                     else:
                         raise ValueError(f"a = {a}, b = {b} both ~ 0 but c = {c} != 0 for neuron {h} at iter {k}")
             else:
                 disc = torch.square(b) - 4.0 * a * c
-                if disc >= 0.0:
+                if disc > 0.0:
                     sqrt_disc = torch.sqrt(disc)
+                    print("sqrt_disc", sqrt_disc)
                     x1 = (-b + sqrt_disc) / (2.0 * a)
                     x2 = (-b - sqrt_disc) / (2.0 * a)
                     candidates = [x for x in (x1, x2) if x > 0.0]
@@ -208,7 +215,7 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
                         raise ValueError(f"Unexpected number of positive roots {len(candidates)} for neuron {h} at iter {k}")
                     z_new = torch.log(candidates[0])
                 else:
-                    raise ValueError(f"Negative discriminant {disc} in quadratic for neuron {h} at iter {k}")
+                    raise ValueError(f"Negative or infinit discriminant {disc} in quadratic for neuron {h} at iter {k}")
             # Update Z[h] and incrementally refresh BZ
             delta = z_new - float(Z[h])
             if delta != 0.0:
@@ -218,25 +225,23 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
                 #     y_bar += (abs(z_new) - abs(Z[h]))*(card_in_h + card_out_h)
                 Z[h] = z_new
                 if verbose:
-                    obj = function_F(n_params, BZ, diag_G)
+                    obj = function_F(n_params, BZ, diag_G).item()
                     print(f"iter {k+1}, neuron {h+1}: Z[h]={Z[h]:.6f}, delta={delta:.6e}, obj={obj:.6f}, a={a:.6e}, b={b:.6e}, c={c:.6e}")
                     OBJ.append(obj)
         if delta_total < tol:
             print(f"Converged after {k+1} iterations (delta_total={delta_total:.6e} < tol={tol})")
             break
     alpha = n_params/torch.sum(torch.exp(BZ) * diag_G).item()
-    obj = function_F(n_params, BZ, diag_G)
+    obj = function_F(n_params, BZ, diag_G).item()
     print(f"Final obj: {obj:.6f}, alpha: {alpha:.6f}")
     if verbose:
-        return BZ, alpha, OBJ
+        return BZ, Z, alpha, OBJ
     return BZ
 
-
-
 def function_F(n, BZ, dG):
-    first = n*(torch.log(torch.sum(torch.exp(BZ) * dG)) - math.log(n))
+    first = n*(torch.logsumexp(BZ + torch.log(dG), axis=0) - math.log(n))
     second = torch.sum(BZ) 
-    return first + second
+    return first - second
 
 
 
@@ -341,7 +346,7 @@ def apply_rescaling(model, BZ: torch.Tensor) -> nn.Module:
           W_l[j, :]   <- scale * W_l[j, :]      (poids entrants du neurone)
           b_l[j]      <- scale * b_l[j]         (biais du neurone, si présent)
           W_{l+1}[:, j] <- (1/scale) * W_{l+1}[:, j]  (poids sortants vers la couche suivante)
-    où scale = exp(BZ_k) pour le neurone k dans l’ordre de concaténation des neurones cachés.
+    où scale = exp(BZ_k) pour le neurone k dans l'ordre de concaténation des neurones cachés.
 
     Paramètres
     ----------
