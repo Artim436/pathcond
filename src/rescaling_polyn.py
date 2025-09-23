@@ -119,8 +119,8 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
 
     Returns
     -------
-    BZ : torch.Tensor [n_params], dtype=float32 on model's device
-        Log-rescaling values.
+    Z : torch.Tensor [n_hidden_neurons], dtype=float32 on model's device
+        Log-rescaling values per hidden neuron.
     """
     # --- Setup: device/dtype and network structure ---
     device = next(model.parameters()).device
@@ -129,6 +129,7 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
     # Collect linear layers; exclude the final (output) layer from hidden count
     linear_indices = [i for i, layer in enumerate(model.model) if isinstance(layer, nn.Linear)]
     n_params = sum(p.numel() for p in model.parameters())
+    n_params_tensor = torch.tensor(n_params, dtype=dtype, device=device)
     n_hidden_neurons = sum(model.model[i].out_features for i in linear_indices[:-1])
 
     # Parameters to optimize
@@ -139,10 +140,9 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
     diag_G = compute_diag_G(model).to(device=device, dtype=dtype)  # shape: [m], elementwise factor
 
     # Maintain BZ incrementally: BZ = B @ Z
-    BZ = torch.zeros(n_params, dtype=dtype, device=device)  # shape: [m]
-    if verbose:
-        OBJ = [function_F(n_params, BZ, diag_G)]
-        print(f"Initial obj: {OBJ[0]:.6f}")
+    BZ = torch.zeros(n_params, dtype=dtype, device=device)    
+    OBJ = [function_F(n_params, BZ, diag_G)]
+    print(f"Initial obj: {OBJ[0]:.6f}")
     for k in range(n_iter):
         delta_total = 0.0
         for h in range(n_hidden_neurons):
@@ -157,68 +157,80 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
             out_h_t   = torch.as_tensor(out_h,   device=device, dtype=torch.long)
             other_h_t = torch.as_tensor(other_h, device=device, dtype=torch.long)
 
+            card_in_h  = int(in_h_t.numel())
+            card_out_h = int(out_h_t.numel())
+
             # Leave-one-out energy vector: exp( (B @ Z) - b_h * Z[h] ) * diag_G
             # Using the maintained BZ avoids a full matmul here.
-            E = torch.exp(BZ - b_h * Z[h]) * diag_G  # shape: [m]
+            Y_h = BZ - b_h * Z[h]  # shape: [m]
+            y_bar = torch.max((Y_h))  # for numerical stability
+            E = torch.exp(Y_h - y_bar) * diag_G  # shape: [m]
 
             # Polynomial coefficients components
             # A_h is scalar (int), others are sums over selected rows of E
-            A_h = int(out_h_t.numel()) - int(in_h_t.numel())
+            A_h = (card_out_h - card_in_h)
 
             B_h = E[out_h_t].sum() 
             C_h = E[in_h_t].sum()
             D_h = E[other_h_t].sum()
 
             # Polynomial: P(X) = a*X^2 + b*X + c where
-            a = B_h * (A_h + n_params)
+            a = B_h * (A_h + n_params_tensor)
             b = D_h * A_h
-            c = C_h * (A_h - n_params)
+            c = C_h * (A_h - n_params_tensor)
 
-            # Solve for positive real roots; then set Z[h] = log(min_positive_root)
-            # We handle quadratic and degenerate linear cases robustly.
-            a_f = float(a)
-            b_f = float(b)
-            c_f = float(c)
+
 
             z_new = 0.0  # default fallback if no positive real root
 
             # Degenerate to linear if a ~ 0
-            if abs(a_f) < 1e-12:
-                if abs(b_f) >= 1e-12:
-                    x = -c_f / b_f
+            if abs(a) < 1e-40:
+                if abs(b) >= 1e-40:
+                    x = -c / b
                     if x > 0.0:
-                        z_new = math.log(x)
-            else:
-                disc = b_f * b_f - 4.0 * a_f * c_f
-                if disc >= 0.0:
-                    sqrt_disc = math.sqrt(disc)
-                    x1 = (-b_f + sqrt_disc) / (2.0 * a_f)
-                    x2 = (-b_f - sqrt_disc) / (2.0 * a_f)
-                    candidates = [x for x in (x1, x2) if x > 0.0]
-                    if candidates:
-                        z_new = math.log(min(candidates))
+                        z_new = torch.log(x)
                     else:
-                        z_new = float(Z[h])  # keep previous if no positive root
+                        raise ValueError(f"Non-positive root {x} in linear case for neuron {h} at iter {k}, a={a}, b={b}, c={c}")
+                else:
+                    if abs(c) < 1e-40:
+                        raise ValueError(f"a = {a}, b = {b}, c = {c} all ~ 0 for neuron {h} at iter {k}")
+                    else:
+                        raise ValueError(f"a = {a}, b = {b} both ~ 0 but c = {c} != 0 for neuron {h} at iter {k}")
+            else:
+                disc = torch.square(b) - 4.0 * a * c
+                if disc >= 0.0:
+                    sqrt_disc = torch.sqrt(disc)
+                    x1 = (-b + sqrt_disc) / (2.0 * a)
+                    x2 = (-b - sqrt_disc) / (2.0 * a)
+                    candidates = [x for x in (x1, x2) if x > 0.0]
+                    if len(candidates) != 1:
+                        print("candidates:", candidates, x1, x2, a, b, c)
+                        raise ValueError(f"Unexpected number of positive roots {len(candidates)} for neuron {h} at iter {k}")
+                    z_new = torch.log(candidates[0])
+                else:
+                    raise ValueError(f"Negative discriminant {disc} in quadratic for neuron {h} at iter {k}")
             # Update Z[h] and incrementally refresh BZ
             delta = z_new - float(Z[h])
-            delta_total += abs(delta)
             if delta != 0.0:
-                Z[h] = z_new
+                delta_total += abs(delta)
                 BZ = BZ + b_h * delta  # rank-1 update instead of recomputing B @ Z
+                # if abs(z_new) > abs(Z[h]):
+                #     y_bar += (abs(z_new) - abs(Z[h]))*(card_in_h + card_out_h)
+                Z[h] = z_new
                 if verbose:
                     obj = function_F(n_params, BZ, diag_G)
-                    # if h % 50 == 0:
-                    #     print(f"iter {k+1}, neuron {h+1}: Z[h]={Z[h]:.6f}, delta={delta:.6e}, obj={obj:.6f}")
+                    print(f"iter {k+1}, neuron {h+1}: Z[h]={Z[h]:.6f}, delta={delta:.6e}, obj={obj:.6f}, a={a:.6e}, b={b:.6e}, c={c:.6e}")
                     OBJ.append(obj)
         if delta_total < tol:
-            if verbose:
-                print(f"Converged after {k+1} iterations (delta_total={delta_total:.6e} < tol={tol})")
+            print(f"Converged after {k+1} iterations (delta_total={delta_total:.6e} < tol={tol})")
             break
-    alpha = n_params/(torch.sum(torch.exp(BZ) * diag_G))
+    alpha = n_params/torch.sum(torch.exp(BZ) * diag_G).item()
+    obj = function_F(n_params, BZ, diag_G)
+    print(f"Final obj: {obj:.6f}, alpha: {alpha:.6f}")
     if verbose:
-        print(f"Final obj: {OBJ[-1]:.6f}")
-        return BZ,alpha, Z, OBJ
+        return BZ, alpha, OBJ
     return BZ
+
 
 
 def function_F(n, BZ, dG):
