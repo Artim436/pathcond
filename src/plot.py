@@ -124,7 +124,6 @@ def plot_mean_var_curves(ACC=None,
     ax.legend(loc="best", frameon=False)
     fig.tight_layout()
     fig.savefig(save_path)
-    plt.show()
     plt.close(fig)
 
     return save_path

@@ -188,6 +188,7 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
     print(f"Initial obj: {OBJ[0]:.6f}")
     for k in range(n_iter):
         delta_total = 0.0
+        y_bar = 0.0  # Track max for numerical stability (not strictly necessary)
         for h in range(n_hidden_neurons):
             # Column for neuron h
             b_h = B[:, h]  # shape: [m]
@@ -202,12 +203,9 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
 
             card_in_h  = int(in_h_t.numel())
             card_out_h = int(out_h_t.numel())
-            print("card_in_h, card_out_h, card_other_h", card_in_h, card_out_h, int(other_h_t.numel()))
             # Leave-one-out energy vector: exp( (B @ Z) - b_h * Z[h] ) * diag_G
             # Using the maintained BZ avoids a full matmul here.
             Y_h = BZ - b_h * Z[h]  # shape: [m]
-            y_bar = torch.max(Y_h)  # for numerical stability
-            print("y_bar", y_bar)
             E = torch.exp(Y_h - y_bar) * diag_G  # shape: [m]
 
             # Polynomial coefficients components
@@ -223,7 +221,6 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
             a = B_h * (A_h + n_params_tensor)
             b = D_h * A_h
             c = C_h * (A_h - n_params_tensor)
-
 
             if a <= 0.0:
                 raise ValueError(f"Non-positive a={a} in quadratic for neuron {h} at iter {k}, A_h={A_h}, B_h={B_h}, C_h={C_h}, D_h={D_h}")
@@ -248,7 +245,6 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
                 disc = torch.square(b) - 4.0 * a * c
                 if disc > 0.0:
                     sqrt_disc = torch.sqrt(disc)
-                    print("sqrt_disc", sqrt_disc)
                     x1 = (-b + sqrt_disc) / (2.0 * a)
                     x2 = (-b - sqrt_disc) / (2.0 * a)
                     candidates = [x for x in (x1, x2) if x > 0.0]
@@ -263,12 +259,12 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
             if delta != 0.0:
                 delta_total += abs(delta)
                 BZ = BZ + b_h * delta  # rank-1 update instead of recomputing B @ Z
-                # if abs(z_new) > abs(Z[h]):
-                #     y_bar += (abs(z_new) - abs(Z[h]))*(card_in_h + card_out_h)
+                if abs(z_new) > abs(Z[h]):
+                    if z_new > y_bar:
+                        y_bar = z_new
                 Z[h] = z_new
                 if verbose:
                     obj = function_F(n_params, BZ, diag_G).item()
-                    print(f"iter {k+1}, neuron {h+1}: Z[h]={Z[h]:.6f}, delta={delta:.6e}, obj={obj:.6f}, a={a:.6e}, b={b:.6e}, c={c:.6e}")
                     OBJ.append(obj)
         if delta_total < tol:
             print(f"Converged after {k+1} iterations (delta_total={delta_total:.6e} < tol={tol})")
