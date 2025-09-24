@@ -4,7 +4,6 @@ import torch.nn as nn
 from tqdm import tqdm
 import math
 from utils import _param_start_offsets
-from rescalin
 
 
 
@@ -111,6 +110,49 @@ def compute_diag_G(model, eps: float = 1e-12):
     res = grad_path_norm(model, device=next(model.parameters()).device)
     reset_model(model, orig_w)
     return res
+
+def apply_neuron_rescaling_mlp(model, layer_idx, neuron_idx, lamda) -> nn.Module:
+    """
+    Applique un rescaling par neurone à une couche spécifique.
+    
+    Args:
+        model: Le modèle PyTorch
+        layer_idx: Index de la couche à rescaler
+        neuron_idx: Index du neurone dans la couche
+        lamda: Facteur de rescaling (float)"""
+    model_copy = copy.deepcopy(model)
+    
+    # Indices des couches linéaires dans le Sequential
+    linear_indices = [i for i, layer in enumerate(model.model) if isinstance(layer, nn.Linear)]
+    
+    if layer_idx >= len(linear_indices):
+        raise ValueError(f"layer_idx doit être < {len(linear_indices)}")
+    
+    actual_idx = linear_indices[layer_idx]
+    layer = model_copy.model[actual_idx]
+    
+    lamda = float(lamda)
+    
+    # Rescaling des poids et biais par neurone
+    with torch.no_grad():
+        # Chaque ligne de weight correspond à un neurone de sortie
+        # On multiplie chaque ligne par le lambda correspondant
+        layer.weight.data[neuron_idx, :] *= lamda
+        
+        # Rescaling du biais si présent
+        if layer.bias is not None:
+            layer.bias.data[neuron_idx] *= lamda
+    
+    # Si ce n'est pas la dernière couche, ajuster la couche suivante
+    if layer_idx < len(linear_indices) - 1:
+        next_idx = linear_indices[layer_idx + 1]
+        next_layer = model_copy.model[next_idx]
+        with torch.no_grad():
+            # Chaque colonne de la couche suivante correspond à un neurone d'entrée
+            # On divise chaque colonne par le lambda correspondant
+            next_layer.weight.data[:, neuron_idx] /= lamda
+    
+    return model_copy
 
 
 def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=False) -> torch.Tensor:
@@ -339,65 +381,85 @@ def compute_in_out_other_h(vect_b):
     return in_h, out_h, other_h
 
 
-def apply_rescaling(model, BZ: torch.Tensor) -> nn.Module:
+def reweight_model(model: nn.Module, BZ: torch.Tensor) -> nn.Module:
     """
-    Applique un reparamétrage par neurone qui conserve la fonction du réseau :
-      - pour chaque neurone caché h_l,j (couche linéaire l, j-ème neurone de sortie) :
-          W_l[j, :]   <- scale * W_l[j, :]      (poids entrants du neurone)
-          b_l[j]      <- scale * b_l[j]         (biais du neurone, si présent)
-          W_{l+1}[:, j] <- (1/scale) * W_{l+1}[:, j]  (poids sortants vers la couche suivante)
-    où scale = exp(BZ_k) pour le neurone k dans l'ordre de concaténation des neurones cachés.
+    Reweight a model according to a log-rescaling vector BZ.
 
-    Paramètres
-    ----------
-    model : nn.Module
-        Réseau avec un attribut `model.model` qui est une séquence de couches (dont des nn.Linear).
-    BZ : torch.Tensor [n_hidden_neurons], dtype=float
-        Log-rescalings par neurone caché, concaténés pour toutes les couches linéaires
-        sauf la dernière (couche de sortie).
-
-    Retour
-    ------
-    nn.Module
-        Une copie du modèle avec reparamétrage appliqué (la sortie du réseau reste inchangée).
+    Args:
+        model (nn.Module): Pytorch model.
+        BZ (torch.Tensor): log-rescaling vector of size [n_params].
+    
+    Returns:
+        nn.Module: Reweighted model.
     """
-    # Copie défensive
-    model_copy = copy.deepcopy(model)
+    # Copie du modèle (mêmes poids, pas de lien mémoire)
+    new_model = copy.deepcopy(model)
 
-    # Récupérer la liste des couches linéaires dans l'ordre
-    linear_layers = [layer for layer in model_copy.model if isinstance(layer, nn.Linear)]
-    if len(linear_layers) < 2:
-        # Rien à faire (aucune couche cachée)
-        return model_copy
+    # Vérification
+    total_params = sum(p.numel() for p in model.parameters())
+    assert BZ.numel() == total_params, \
+        f"Taille de BZ {BZ.numel()} incompatible avec {total_params} paramètres"
 
-    # Échelles par neurone (positives)
-    # Convention : scale = exp(BZ) ; (si vous préférez exp(-BZ/2), adaptez ici et ci-dessous)
-    scales = torch.exp(-BZ/2.0)  # shape: [n_hidden_neurons]
+    # On va parcourir les paramètres
+    idx = 0
+    for p in new_model.parameters():
+        numel = p.numel()
+        # On reshape la portion correspondante de BZ
+        bz_chunk = BZ[idx:idx+numel].view_as(p.data)
+        idx += numel
+        # Multiplication
+        p.data = p.data * torch.exp(-0.5 * bz_chunk)
+    return new_model
 
-    # Pointeur dans le vecteur de rescalings par neurone
-    z_offset = 0
 
-    # On applique à toutes les couches sauf la dernière (pas de rescaling sur la sortie)
-    for l in range(len(linear_layers) - 1):
-        layer = linear_layers[l]
-        next_layer = linear_layers[l + 1]
 
-        out_features, in_features = layer.weight.shape  # W_l shape: (out, in)
-        # Les neurones de la couche l sont au nombre de out_features
-        layer_scales = scales[z_offset: z_offset + out_features].to(layer.weight.device, layer.weight.dtype)
-        if layer_scales.numel() != out_features:
-            raise ValueError(
-                f"Longueur de BZ incohérente : attendu au moins {z_offset + out_features}, "
-                f"reçu {scales.numel()}."
-            )
-        z_offset += out_features
 
-        layer.weight.data.mul_(layer_scales.view(-1, 1))
+def hessian_2(model, inputs):
+    """
+    Calcule la Hessienne complète de la fonction scalaire
+    f(model) = model.forward_2(inputs).sum() 
+    par rapport à tous les paramètres du modèle.
+    """
+    # Étape 1 : fonction scalaire
+    def f(model, inputs):
+        return model.forward_squared(inputs).sum()
 
-        if layer.bias is not None:
-            layer.bias.data.mul_(layer_scales)
+    # Étape 2 : premier gradient ∇f
+    grad = torch.autograd.grad(f(model, inputs), model.parameters(), create_graph=True)
+    grad_vec = torch.cat([g.contiguous().view(-1) for g in grad])
 
-        inv_layer_scales = (1.0 / layer_scales).to(next_layer.weight.dtype)
-        next_layer.weight.data.mul_(inv_layer_scales.view(1, -1))
+    # Étape 3 : calcul ligne par ligne de la Hessienne
+    hessian_rows = []
+    print("Computing Hessian...")
+    for i in tqdm(range(grad_vec.numel())):
+        grad2 = torch.autograd.grad(grad_vec[i], model.parameters(), retain_graph=True)
+        row = torch.cat([g.contiguous().view(-1) for g in grad2])
+        hessian_rows.append(row)
 
-    return model_copy
+    # Étape 4 : empilement en matrice
+    hessian = torch.stack(hessian_rows)
+
+    return hessian
+
+
+def compute_G_matrix(model) -> torch.Tensor:
+    """
+    Calcule la matrice G pour le modèle donné et les entrées.
+    G_{ij} = H_{ij}/4 si i ≠ j
+    G_{ii} = H_{ii}/2 si i = j
+    """
+    inputs = torch.ones(1, 1, model.model[0].in_features)  # Dummy input for G computation
+    hessian = hessian_2(model, inputs)  # supposé renvoyer un tenseur carré (H)
+    
+    # Copie pour ne pas modifier H
+    G = hessian.clone()
+
+    # Division des diagonales par 2
+    diag_indices = torch.arange(G.shape[0], device=G.device)
+    G[diag_indices, diag_indices] = G[diag_indices, diag_indices] / 2.0
+
+    # Division du reste par 4
+    off_diag_mask = ~torch.eye(G.shape[0], dtype=bool, device=G.device) # True hors daig et Flase sur la diag
+    G[off_diag_mask] = G[off_diag_mask] / 4.0
+
+    return G

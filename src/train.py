@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from mlp import MNISTMLP
 from data import mnist_loaders
-from rescaling_polyn import optimize_neuron_rescaling_polynomial, apply_rescaling
+from rescaling_polyn import optimize_neuron_rescaling_polynomial, reweight_model
 from plot import plot_rescaling_analysis
 
 import time
@@ -246,7 +246,7 @@ def rescaling_path_dynamics(model, verbose: bool = False, soft: bool = True, nb_
         print("-" * 50)
 
     BZ_opt, alpha, Z_opt, OBJ_hist = optimize_neuron_rescaling_polynomial(model=model, n_iter=nb_iter, verbose=verbose, tol=1e-6)
-    final_model = apply_rescaling(model, BZ_opt)
+    final_model = reweight_model(model, BZ_opt)
     lambdas_history = torch.exp(-(Z_opt.clone().detach())/2).to("cpu")
     OBJ_hist = torch.tensor(OBJ_hist).to("cpu")
     plot_rescaling_analysis(final_model=final_model, lambdas_history=lambdas_history, norms_history=OBJ_hist, nb_iter_optim=nb_iter, name=name)

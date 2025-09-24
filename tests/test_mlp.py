@@ -1,5 +1,5 @@
 import torch
-from mnist_mlp import MNISTMLP
+from mlp import MNISTMLP
 
 def test_forward_shape():
     model = MNISTMLP()

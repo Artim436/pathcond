@@ -2,17 +2,18 @@ import copy
 import torch
 import torch.nn as nn
 import pytest
+import math
 
-from mnist_mlp.mlp import MNISTMLP
-from mnist_mlp.rescaling import (
+from mlp import MNISTMLP
+from rescaling_polyn import (
     apply_neuron_rescaling_mlp,
     compute_G_matrix,
-    apply_neuron_rescaling_on_matrix_G,
     set_weights_for_path_norm,
     reset_model,
     compute_diag_G,
+    compute_matrix_B,
+    reweight_model,
 )
-from mnist_mlp.rescaling_polyn import apply_rescaling, compute_matrix_B
 
 torch.manual_seed(0)
 
@@ -110,20 +111,7 @@ def test_layer_idx_bounds_raise(sizes=(32, 16)):
         _ = apply_neuron_rescaling_mlp(m, layer_idx=3, neuron_idx=0, lamda=1.0)
 
 
-def test_apply_neuron_rescaling_on_matrix_G(sizes=(2, 2)):
-    torch.manual_seed(0)
-    m = MNISTMLP(d_hidden1=sizes[0], d_hidden2=sizes[1], p_drop=0.0).eval()
-    G_ref = compute_G_matrix(m)
-    layers_idx_set = [0, 1]
-    neuron_idx_set = [0, 1]
-    for layer_idx in layers_idx_set:
-        for neuron_idx in neuron_idx_set:
-            lam = 1.5
-            m2 = apply_neuron_rescaling_mlp(m, layer_idx=layer_idx, neuron_idx=neuron_idx, lamda=lam)
-            G_resc_neuron = compute_G_matrix(m2)
-            G_resc_mat = apply_neuron_rescaling_on_matrix_G(model=m, G_mat=G_ref, layer_idx=layer_idx, neuron_idx=neuron_idx, lamda=lam)[1]
-            with torch.no_grad():
-                assert torch.allclose(G_resc_neuron, G_resc_mat, rtol=1e-6, atol=1e-7)
+
 
 def test_reset_weights(sizes=(2, 2)):
     torch.manual_seed(0)
@@ -161,10 +149,20 @@ def test_apply_rescaling(sizes=(4, 4)):
     Z = torch.randn(n_hidden_neurons)
     B = compute_matrix_B(m).to(torch.float32)
     BZ = B @ Z
-    m2 = apply_rescaling(m, BZ)
+    m2 = reweight_model(m, BZ)
     # Vérification de l'invariance de la sortie
     x = rand_input(batch=3)
     with torch.no_grad():
         y_ref = m(x)
         y_new = m2(x)
         assert torch.allclose(y_ref, y_new, rtol=1e-6, atol=1e-7)
+
+    Z = [1.4] + [0]*(n_hidden_neurons-1)
+    Z = torch.tensor(Z)
+    BZ = B @ Z
+    m3 = reweight_model(m, BZ)
+    # Le premier neurone de la première couche cachée doit être multiplié par exp(-1.4/2)
+    m4 = apply_neuron_rescaling_mlp(m, layer_idx=0, neuron_idx=0, lamda=math.exp(-BZ[0]/2))
+    with torch.no_grad():
+        for p3, p4 in zip(m3.parameters(), m4.parameters()):
+            assert torch.allclose(p3, p4, rtol=1e-6, atol=1e-7)

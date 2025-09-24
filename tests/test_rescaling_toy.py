@@ -3,11 +3,10 @@ import torch
 import torch.nn as nn
 import pytest
 
-from mnist_mlp.mlp import toy_MLP
-from mnist_mlp.rescaling import (
+from mlp import toy_MLP
+from rescaling_polyn import (
     apply_neuron_rescaling_mlp,
     compute_G_matrix,
-    apply_neuron_rescaling_on_matrix_G,
     set_weights_for_path_norm,
     reset_model,
     compute_diag_G,
@@ -109,20 +108,6 @@ def test_layer_idx_bounds_raise(sizes=(32, 16)):
         _ = apply_neuron_rescaling_mlp(m, layer_idx=3, neuron_idx=0, lamda=1.0)
 
 
-def test_apply_neuron_rescaling_on_matrix_G(sizes=(2, 2)):
-    torch.manual_seed(0)
-    m = toy_MLP(d_input=sizes[0], d_hidden1=sizes[1]).eval()
-    G_ref = compute_G_matrix(m)
-    layers_idx_set = [0]
-    neuron_idx_set = [0, 1]
-    for layer_idx in layers_idx_set:
-        for neuron_idx in neuron_idx_set:
-            lam = 1.5
-            m2 = apply_neuron_rescaling_mlp(m, layer_idx=layer_idx, neuron_idx=neuron_idx, lamda=lam)
-            G_resc_neuron = compute_G_matrix(m2)
-            G_resc_mat = apply_neuron_rescaling_on_matrix_G(model=m, G_mat=G_ref, layer_idx=layer_idx, neuron_idx=neuron_idx, lamda=lam)[1]
-            with torch.no_grad():
-                assert torch.allclose(G_resc_neuron, G_resc_mat, rtol=1e-6, atol=1e-7)
 
 def test_reset_weights(sizes=(2, 2)):
     torch.manual_seed(0)
