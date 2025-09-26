@@ -1,13 +1,12 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="mnist-mlp",
+    name="pathcond",
     version="0.1.0",
     description="Minimal MLP (ReLU) for MNIST",
     author="Arthur Lebeurrier",
     python_requires=">=3.9",
-    packages=find_packages(where="src"),
-    package_dir={"": "src"},
+    packages=find_packages(),
     install_requires=[
         "torch>=2.1",
         "torchvision>=0.16",
@@ -23,8 +22,8 @@ setup(
     entry_points={
         "console_scripts": [
             "mnist-train = cli:main",
-        "compare-g-diag-g = plot_diag_vs_full:main",
-        "mnist-plot-curves = cli_plot:main",
+            "compare-g-diag-g = plot_diag_vs_full:main",
+            "mnist-plot-curves = cli_plot:main",
         ],
     },
 )

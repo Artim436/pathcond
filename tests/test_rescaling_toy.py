@@ -3,8 +3,8 @@ import torch
 import torch.nn as nn
 import pytest
 
-from mlp import toy_MLP
-from rescaling_polyn import (
+from pathcond.mlp import toy_MLP
+from pathcond.rescaling_polyn import (
     apply_neuron_rescaling_mlp,
     compute_G_matrix,
     set_weights_for_path_norm,
@@ -14,6 +14,7 @@ from rescaling_polyn import (
 
 torch.manual_seed(0)
 
+
 def make_model(sizes=(32, 16)):
     # Modèle plus petit pour des tests rapides
     m = toy_MLP(d_input=sizes[0], d_hidden1=sizes[1])
@@ -21,9 +22,11 @@ def make_model(sizes=(32, 16)):
     m.eval()
     return m
 
+
 def rand_input(batch=3):
     # Entrée aléatoire format MNIST: (B, 1, 28, 28)
     return torch.randn(batch, 1, 28, 28)
+
 
 def clone_tensors(module):
     # Copie profonde des tenseurs de poids/biais pour comparaison
@@ -73,19 +76,18 @@ def test_weights_and_compensation_are_updated_correctly_for_hidden_layer(sizes=(
 
     # Biais de la couche 0 multiplié par lam (si présent)
     b0_before = before["model.0.bias"][neuron_idx]
-    b0_after  = after["model.0.bias"][neuron_idx]
+    b0_after = after["model.0.bias"][neuron_idx]
     assert torch.allclose(b0_after, b0_before * lam)
 
     # Couche suivante (index réel 3): la colonne correspondante divisée par lam
     w3_before_col = before["model.2.weight"][:, neuron_idx]
-    w3_after_col  = after["model.2.weight"][:, neuron_idx]
+    w3_after_col = after["model.2.weight"][:, neuron_idx]
     assert torch.allclose(w3_after_col, w3_before_col / lam)
 
     # Un autre neurone non ciblé est inchangé
     other = (neuron_idx + 1) % m.model[0].out_features
     assert torch.allclose(after["model.0.weight"][other], before["model.0.weight"][other])
     assert torch.allclose(after["model.2.weight"][:, other], before["model.2.weight"][:, other])
-
 
 
 def test_original_model_is_not_modified(sizes=(32, 16)):
@@ -108,7 +110,6 @@ def test_layer_idx_bounds_raise(sizes=(32, 16)):
         _ = apply_neuron_rescaling_mlp(m, layer_idx=3, neuron_idx=0, lamda=1.0)
 
 
-
 def test_reset_weights(sizes=(2, 2)):
     torch.manual_seed(0)
     m = toy_MLP(d_input=sizes[0], d_hidden1=sizes[1]).eval()
@@ -125,6 +126,7 @@ def test_set_weights_for_path_norm(sizes=(2, 2)):
     for (name, p), (name_orig, p_orig) in zip(m.named_parameters(), orig_w.items()):
         assert name == name_orig
         assert torch.allclose(p, p_orig ** 2)
+
 
 def test_diag_G(sizes=(2, 2)):
     torch.manual_seed(0)

@@ -3,19 +3,17 @@ import torch
 import torch.nn as nn
 from tqdm import tqdm
 import math
-from utils import _param_start_offsets
-
+from pathcond.utils import _param_start_offsets
 
 
 def grad_path_norm(model, device="cpu") -> torch.Tensor:
     inputs = torch.ones(1, 1, model.model[0].in_features)  # Dummy input for G computation
+
     def fct(model, inputs, device="cpu"):
         return model.forward(inputs, device=device).sum()
     grad = torch.autograd.grad(fct(model, inputs, device=device), model.parameters())
     grad = [g.view(-1) for g in grad]  # Aplatir les gradients
     return torch.cat(grad)  # Concaténer les gradients en un seul tenseur
-
-
 
 
 def set_weights_for_path_norm(
@@ -81,6 +79,7 @@ def set_weights_for_path_norm(
                 )
     return orig_weights
 
+
 def reset_model(model, orig_weights):
     """
     Reset weights and maxpool layer of a model.
@@ -111,38 +110,39 @@ def compute_diag_G(model, eps: float = 1e-12):
     reset_model(model, orig_w)
     return res
 
+
 def apply_neuron_rescaling_mlp(model, layer_idx, neuron_idx, lamda) -> nn.Module:
     """
     Applique un rescaling par neurone à une couche spécifique.
-    
+
     Args:
         model: Le modèle PyTorch
         layer_idx: Index de la couche à rescaler
         neuron_idx: Index du neurone dans la couche
         lamda: Facteur de rescaling (float)"""
     model_copy = copy.deepcopy(model)
-    
+
     # Indices des couches linéaires dans le Sequential
     linear_indices = [i for i, layer in enumerate(model.model) if isinstance(layer, nn.Linear)]
-    
+
     if layer_idx >= len(linear_indices):
         raise ValueError(f"layer_idx doit être < {len(linear_indices)}")
-    
+
     actual_idx = linear_indices[layer_idx]
     layer = model_copy.model[actual_idx]
-    
+
     lamda = float(lamda)
-    
+
     # Rescaling des poids et biais par neurone
     with torch.no_grad():
         # Chaque ligne de weight correspond à un neurone de sortie
         # On multiplie chaque ligne par le lambda correspondant
         layer.weight.data[neuron_idx, :] *= lamda
-        
+
         # Rescaling du biais si présent
         if layer.bias is not None:
             layer.bias.data[neuron_idx] *= lamda
-    
+
     # Si ce n'est pas la dernière couche, ajuster la couche suivante
     if layer_idx < len(linear_indices) - 1:
         next_idx = linear_indices[layer_idx + 1]
@@ -151,7 +151,7 @@ def apply_neuron_rescaling_mlp(model, layer_idx, neuron_idx, lamda) -> nn.Module
             # Chaque colonne de la couche suivante correspond à un neurone d'entrée
             # On divise chaque colonne par le lambda correspondant
             next_layer.weight.data[:, neuron_idx] /= lamda
-    
+
     return model_copy
 
 
@@ -183,7 +183,7 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
     diag_G = compute_diag_G(model).to(device=device, dtype=dtype)  # shape: [m], elementwise factor
 
     # Maintain BZ incrementally: BZ = B @ Z
-    BZ = torch.zeros(n_params, dtype=dtype, device=device)    
+    BZ = torch.zeros(n_params, dtype=dtype, device=device)
     OBJ = [function_F(n_params, BZ, diag_G).item()]
     print(f"Initial obj: {OBJ[0]:.6f}")
     for k in range(n_iter):
@@ -197,11 +197,11 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
             in_h, out_h, other_h = compute_in_out_other_h(b_h)
 
             # Ensure torch index tensors on the right device
-            in_h_t    = torch.as_tensor(in_h,    device=device, dtype=torch.long)
-            out_h_t   = torch.as_tensor(out_h,   device=device, dtype=torch.long)
+            in_h_t = torch.as_tensor(in_h,    device=device, dtype=torch.long)
+            out_h_t = torch.as_tensor(out_h,   device=device, dtype=torch.long)
             other_h_t = torch.as_tensor(other_h, device=device, dtype=torch.long)
 
-            card_in_h  = int(in_h_t.numel())
+            card_in_h = int(in_h_t.numel())
             card_out_h = int(out_h_t.numel())
             # Leave-one-out energy vector: exp( (B @ Z) - b_h * Z[h] ) * diag_G
             # Using the maintained BZ avoids a full matmul here.
@@ -212,10 +212,9 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
             # A_h is scalar (int), others are sums over selected rows of E
             A_h = (card_in_h - card_out_h)
             B_h = E[out_h_t].sum()
-            
+
             C_h = E[in_h_t].sum()
             D_h = E[other_h_t].sum()
-
 
             # Polynomial: P(X) = a*X^2 + b*X + c where
             a = B_h * (A_h + n_params_tensor)
@@ -223,10 +222,11 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
             c = C_h * (A_h - n_params_tensor)
 
             if a <= 0.0:
-                raise ValueError(f"Non-positive a={a} in quadratic for neuron {h} at iter {k}, A_h={A_h}, B_h={B_h}, C_h={C_h}, D_h={D_h}")
+                raise ValueError(
+                    f"Non-positive a={a} in quadratic for neuron {h} at iter {k}, A_h={A_h}, B_h={B_h}, C_h={C_h}, D_h={D_h}")
             if c >= 0.0:
-                raise ValueError(f"Non-negative c={c} in quadratic for neuron {h} at iter {k}, A_h={A_h}, B_h={B_h}, C_h={C_h}, D_h={D_h}")
-
+                raise ValueError(
+                    f"Non-negative c={c} in quadratic for neuron {h} at iter {k}, A_h={A_h}, B_h={B_h}, C_h={C_h}, D_h={D_h}")
 
             # Degenerate to linear if a ~ 0
             if abs(a) < 1e-20:
@@ -235,7 +235,8 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
                     if x > 0.0:
                         z_new = torch.log(x)
                     else:
-                        raise ValueError(f"Non-positive root {x} in linear case for neuron {h} at iter {k}, a={a}, b={b}, c={c}")
+                        raise ValueError(
+                            f"Non-positive root {x} in linear case for neuron {h} at iter {k}, a={a}, b={b}, c={c}")
                 else:
                     if abs(c) < 1e-20:
                         raise ValueError(f"a = {a}, b = {b}, c = {c} all ~ 0 for neuron {h} at iter {k}")
@@ -250,7 +251,8 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
                     candidates = [x for x in (x1, x2) if x > 0.0]
                     if len(candidates) != 1:
                         print("candidates:", candidates, x1, x2, a, b, c)
-                        raise ValueError(f"Unexpected number of positive roots {len(candidates)} for neuron {h} at iter {k}")
+                        raise ValueError(
+                            f"Unexpected number of positive roots {len(candidates)} for neuron {h} at iter {k}")
                     z_new = torch.log(candidates[0])
                 else:
                     raise ValueError(f"Negative or infinit discriminant {disc} in quadratic for neuron {h} at iter {k}")
@@ -276,13 +278,11 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
         return BZ, Z, alpha, OBJ
     return BZ
 
+
 def function_F(n, BZ, dG):
     first = n*(torch.logsumexp(BZ + torch.log(dG), axis=0) - math.log(n))
-    second = torch.sum(BZ) 
+    second = torch.sum(BZ)
     return first - second
-
-
-
 
 
 def compute_matrix_B(model: nn.Module) -> torch.Tensor:
@@ -384,7 +384,7 @@ def reweight_model(model: nn.Module, BZ: torch.Tensor) -> nn.Module:
     Args:
         model (nn.Module): Pytorch model.
         BZ (torch.Tensor): log-rescaling vector of size [n_params].
-    
+
     Returns:
         nn.Module: Reweighted model.
     """
@@ -408,12 +408,10 @@ def reweight_model(model: nn.Module, BZ: torch.Tensor) -> nn.Module:
     return new_model
 
 
-
-
 def hessian_2(model, inputs):
     """
     Calcule la Hessienne complète de la fonction scalaire
-    f(model) = model.forward_2(inputs).sum() 
+    f(model) = model.forward_2(inputs).sum()
     par rapport à tous les paramètres du modèle.
     """
     # Étape 1 : fonction scalaire
@@ -446,7 +444,7 @@ def compute_G_matrix(model) -> torch.Tensor:
     """
     inputs = torch.ones(1, 1, model.model[0].in_features)  # Dummy input for G computation
     hessian = hessian_2(model, inputs)  # supposé renvoyer un tenseur carré (H)
-    
+
     # Copie pour ne pas modifier H
     G = hessian.clone()
 
@@ -455,7 +453,7 @@ def compute_G_matrix(model) -> torch.Tensor:
     G[diag_indices, diag_indices] = G[diag_indices, diag_indices] / 2.0
 
     # Division du reste par 4
-    off_diag_mask = ~torch.eye(G.shape[0], dtype=bool, device=G.device) # True hors daig et Flase sur la diag
+    off_diag_mask = ~torch.eye(G.shape[0], dtype=bool, device=G.device)  # True hors daig et Flase sur la diag
     G[off_diag_mask] = G[off_diag_mask] / 4.0
 
     return G

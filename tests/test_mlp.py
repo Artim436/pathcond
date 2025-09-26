@@ -1,11 +1,13 @@
 import torch
-from mlp import MNISTMLP
+from pathcond.mlp import MNISTMLP
+
 
 def test_forward_shape():
     model = MNISTMLP()
     x = torch.randn(4, 1, 28, 28)
     logits = model(x)
     assert logits.shape == (4, 10)
+
 
 def test_train_step():
     model = MNISTMLP()

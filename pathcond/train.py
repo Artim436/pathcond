@@ -2,13 +2,12 @@ from __future__ import annotations
 from typing import Tuple, List
 import torch
 import torch.nn as nn
-from mlp import MNISTMLP
-from data import mnist_loaders
-from rescaling_polyn import optimize_neuron_rescaling_polynomial, reweight_model
-from plot import plot_rescaling_analysis
+from pathcond.mlp import MNISTMLP
+from pathcond.data import mnist_loaders
+from pathcond.rescaling_polyn import optimize_neuron_rescaling_polynomial, reweight_model
+from pathcond.plot import plot_rescaling_analysis
 
 import time
-
 
 
 def train_one_epoch(model, loader, criterion, optimizer, device, fraction: float = 1.0) -> float:
@@ -58,7 +57,8 @@ def evaluate(model, loader, device) -> float:
         total += y.size(0)
     return correct / total
 
-def fit_with_telportation(  
+
+def fit_with_telportation(
     epochs: int = 5,
     lr: float = 1e-3,
     hidden=(2, 2),
@@ -211,8 +211,6 @@ def fit_with_telportation(
             LOSS[it, :, 2] = torch.tensor(loss_history_adam)
             LOSS[it, :, 3] = torch.tensor(loss_history_ref_adam)
 
-
-
         acc_history = variants["sgd"]["hist_acc"]
         acc_history_ref = variants["ref_sgd"]["hist_acc"]
         ACC[it, :, 0] = torch.tensor(acc_history)
@@ -226,7 +224,6 @@ def fit_with_telportation(
     return (
         LOSS, ACC
     )
-
 
 
 def rescaling_path_dynamics(model, verbose: bool = False, soft: bool = True, nb_iter=1, name: str = "sgd", device="cpu") -> MNISTMLP:
@@ -245,11 +242,13 @@ def rescaling_path_dynamics(model, verbose: bool = False, soft: bool = True, nb_
         print("\n1. Optimisation séquentielle neurone par neurone...")
         print("-" * 50)
 
-    BZ_opt, Z_opt, alpha, OBJ_hist = optimize_neuron_rescaling_polynomial(model=model, n_iter=nb_iter, verbose=verbose, tol=1e-6)
+    BZ_opt, Z_opt, alpha, OBJ_hist = optimize_neuron_rescaling_polynomial(
+        model=model, n_iter=nb_iter, verbose=verbose, tol=1e-6)
     final_model = reweight_model(model, BZ_opt)
     lambdas_history = torch.exp(-(Z_opt.clone().detach())/2).cpu().numpy()
     OBJ_hist = torch.tensor(OBJ_hist).to("cpu")
-    plot_rescaling_analysis(final_model=final_model, lambdas_history=lambdas_history, norms_history=OBJ_hist, nb_iter_optim=nb_iter, name=name)
+    plot_rescaling_analysis(final_model=final_model, lambdas_history=lambdas_history,
+                            norms_history=OBJ_hist, nb_iter_optim=nb_iter, name=name)
 
     # 4. Vérification de la sortie finale
     if verbose:
@@ -259,5 +258,3 @@ def rescaling_path_dynamics(model, verbose: bool = False, soft: bool = True, nb_
     print("✅ Sortie finale préservée après rescaling, alpha =", alpha)
 
     return final_model, alpha
-
-
