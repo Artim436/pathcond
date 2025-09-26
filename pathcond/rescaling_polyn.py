@@ -156,7 +156,7 @@ def apply_neuron_rescaling_mlp(model, layer_idx, neuron_idx, lamda) -> nn.Module
     return model_copy
 
 
-def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=False) -> torch.Tensor:
+def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=False, reg=None) -> torch.Tensor:
     """
     Optimize per-hidden-neuron log-rescalings Z via a per-neuron quadratic, using
     incremental updates to avoid recomputing B @ Z from scratch at every step.
@@ -182,6 +182,8 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
     # Problem-specific matrices/vectors
     B = compute_matrix_B(model).to(device=device, dtype=dtype)     # shape: [m, n_hidden_neurons]
     diag_G = compute_diag_G(model).to(device=device, dtype=dtype)  # shape: [m], elementwise factor
+    if reg is not None:
+        diag_G += reg
 
     # Maintain BZ incrementally: BZ = B @ Z
     BZ = torch.zeros(n_params, dtype=dtype, device=device)

@@ -1,6 +1,6 @@
 # %%
 import torch
-from pathcond.rescaling_polyn import optimize_neuron_rescaling_polynomial, reweight_model, forward_with_rescaled
+from pathcond.rescaling_polyn import optimize_neuron_rescaling_polynomial, reweight_model, compute_diag_G
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -29,13 +29,17 @@ class SimpleNN(nn.Module):
     def __init__(self):
         super().__init__()
         self.model = nn.Sequential(
-            nn.Linear(2, 10),
+            nn.Linear(2, 50),
             nn.ReLU(),
-            nn.Linear(10, 2),
+            # nn.Linear(10, 5),
+            # nn.ReLU(),
+            # nn.Linear(5, 5),
+            # nn.ReLU(),
+            # nn.Linear(5, 5),
             # nn.ReLU(),
             # nn.Linear(16, 16),
             # nn.ReLU(),
-            # nn.Linear(16, 2)  # sortie binaire
+            nn.Linear(50, 2)  # sortie binaire
         )
 
     def forward(self, x, device='cpu'):
@@ -44,9 +48,9 @@ class SimpleNN(nn.Module):
 
 
 # %%
-nb_iter = 10
+nb_iter = 15
 verbose = True
-lr = 1.0
+lr = 0.05
 epochs = 1000
 rescale_every = 10
 # torch.manual_seed(3)
@@ -64,18 +68,16 @@ criterion = nn.CrossEntropyLoss()
 all_model = [
     model_simple,
     model_rescaled,
-    # model_teleport_first,
     model_teleport_second
 ]
 all_names = [
     'vanilla',
     'init. rescaled',
-    # 'teleport_forward',
     'teleport'
 ]
 loss_histories = {}
 all_rescaling = []
-
+all_diag_G = []
 for name in all_names:
     loss_histories[(name, 'loss')] = []
     loss_histories[(name, 'acc_test')] = []
@@ -89,20 +91,7 @@ for model, name in zip(all_model, all_names):
     for epoch in range(epochs):
         model.train()
         optimizer.zero_grad()
-        if name == "teleport_forward" and (epoch+1) % rescale_every == 0:
-
-            BZ_opt = optimize_neuron_rescaling_polynomial(
-                model=model,
-                n_iter=nb_iter,
-                verbose=False,
-                tol=1e-6)
-            st = time.time()
-            outputs = forward_with_rescaled(model, X_train, torch.exp(-0.5 * BZ_opt))
-            ed = time.time()
-            total_time_forward_rescaled += ed - st
-
-        else:
-            outputs = model(X_train)
+        outputs = model(X_train)
         loss = criterion(outputs, y_train)
         loss.backward()
         optimizer.step()
@@ -132,6 +121,8 @@ for model, name in zip(all_model, all_names):
             st = time.time()
             param_vec = parameters_to_vector(model.parameters())
             rescaling = torch.exp(-0.5 * BZ_opt)
+            diag_G = compute_diag_G(model)
+            all_diag_G.append(diag_G)
             all_rescaling.append(rescaling)
             reweighted_vec = param_vec * rescaling
             vector_to_parameters(reweighted_vec, model.parameters())
@@ -139,49 +130,88 @@ for model, name in zip(all_model, all_names):
             total_time_forward_inplace += ed - st
 # %%
 all_rescaling = torch.stack(all_rescaling, dim=0)
-# %%
-print('Time forward_rescaled = {}'.format(total_time_forward_rescaled))
-print('Time forward_inplace = {}'.format(total_time_forward_inplace))
+all_diag_G = torch.stack(all_diag_G, dim=0)
+# # %%
+# print('Time forward_rescaled = {}'.format(total_time_forward_rescaled))
+# print('Time forward_inplace = {}'.format(total_time_forward_inplace))
 
 # %%
+
+cmap = plt.cm.get_cmap('tab10')
 
 
 def plot_loss_dict(loss_histories, fs=15, figsize=(5, 5)):
     n = len(loss_histories)
-    fig, axes = plt.subplots(1, 4, figsize=figsize)
+    fig, axes = plt.subplots(2, 3, figsize=figsize)
     for model_name in all_names:
         if model_name in ['vanilla', 'init. rescaled', 'teleport']:
             loss_history = loss_histories[(model_name, 'loss')]
             test_acc = loss_histories[(model_name, 'acc_test')]
             train_acc = loss_histories[(model_name, 'acc_train')]
 
-            axes[0].plot(loss_history, label=f"{model_name}", lw=2)
-            axes[0].set_xlabel("Epochs", fontsize=fs)
-            axes[0].set_ylabel("Training loss", fontsize=fs)
-            # axes[0].legend(fontsize=fs)
-            axes[0].grid(alpha=0.5)
+            axes[0, 0].plot(loss_history, lw=2)
+            axes[0, 0].set_xlabel("Epochs", fontsize=fs)
+            axes[0, 0].set_ylabel("Training loss", fontsize=fs)
+            axes[0, 0].grid(alpha=0.5)
 
-            axes[1].plot(train_acc, label=f"{model_name}", lw=2)
-            axes[1].set_xlabel("Epochs", fontsize=fs)
-            axes[1].set_ylabel("Train accuracy", fontsize=fs)
-            # axes[1].legend(fontsize=fs)
-            axes[1].grid(alpha=0.5)
+            axes[0, 1].plot(train_acc, lw=2)
+            axes[0, 1].set_xlabel("Epochs", fontsize=fs)
+            axes[0, 1].set_ylabel("Train accuracy", fontsize=fs)
+            axes[0, 1].grid(alpha=0.5)
 
-            axes[2].plot(test_acc, label=f"{model_name}", lw=2)
-            axes[2].set_xlabel("Epochs", fontsize=fs)
-            axes[2].set_ylabel("Test accuracy", fontsize=fs)
-            axes[2].legend(fontsize=fs)
-            axes[2].grid(alpha=0.5)
+            if model_name == 'teleport':
+                write = 'teleport (every {})'.format(rescale_every)
+            else:
+                write = model_name
+            axes[0, 2].plot(test_acc, label=write, lw=2)
+            axes[0, 2].set_xlabel("Epochs", fontsize=fs)
+            axes[0, 2].set_ylabel("Test accuracy", fontsize=fs)
+            axes[0, 2].legend(fontsize=fs)
+            axes[0, 2].grid(alpha=0.5)
 
-    axes[3].plot(all_rescaling.mean(0), lw=3)
+    axes[1, 0].plot(all_rescaling.mean(1), lw=3, label='mean rescaling', color=cmap(0))
     # axes[3].fill_between(all_rescaling.mean(0), lw=3)
-    axes[3].fill_between(range(len(all_rescaling.mean(0))),
-                         all_rescaling.mean(0)-torch.std(all_rescaling, axis=0),
-                         all_rescaling.mean(0)+torch.std(all_rescaling, axis=0),
-                         alpha=0.5)
-    axes[3].set_xlabel("steps", fontsize=fs)
-    axes[3].grid(alpha=0.5)
-    axes[3].set_title('Mean rescaling +/- std', fontsize=fs+2)
+    axes[1, 0].fill_between(range(len(all_rescaling.mean(1))),
+                            all_rescaling.mean(1)-torch.std(all_rescaling, axis=1),
+                            all_rescaling.mean(1)+torch.std(all_rescaling, axis=1),
+                            alpha=0.3, color=cmap(0))
+
+    axes[1, 0].set_xlabel("teleport step", fontsize=fs)
+    axes[1, 0].grid(alpha=0.5)
+    axes[1, 0].set_title('Scaling (+/- std)', fontsize=fs+2)
+    axes[1, 0].legend(fontsize=fs)
+
+    to_plot = all_diag_G.mean(1)
+    axes[1, 1].plot(all_diag_G.mean(1), lw=3, label='mean $G_{ii}$', color=cmap(1))
+    axes[1, 1].plot(all_diag_G.min(1)[0], lw=3, label='min $G_{ii}$',
+                    color=cmap(1),
+                    linestyle='--', alpha=0.4)
+    axes[1, 1].plot(all_diag_G.max(1)[0],
+                    lw=3,
+                    label='max $G_{ii}$',
+                    color=cmap(1),
+                    linestyle='--',
+                    alpha=0.4)
+
+    axes[1, 1].fill_between(range(len(to_plot)),
+                            all_rescaling.mean(1)-torch.std(all_rescaling, axis=1),
+                            all_rescaling.mean(1)-torch.std(all_rescaling, axis=1),
+                            alpha=0.3,
+                            color=cmap(1))
+
+    # axes[3].fill_between(all_rescaling.mean(0), lw=3)
+    axes[1, 1].set_xlabel("teleport step", fontsize=fs)
+    axes[1, 1].grid(alpha=0.5)
+    axes[1, 1].set_title('$\\operatorname{diag}(G)$', fontsize=fs+2)
+    axes[1, 1].legend(fontsize=fs)
+
+    to_plot = all_diag_G.max(1)[0] / all_diag_G.min(1)[0]
+    axes[1, 2].plot(to_plot, lw=3, label='$\kappa(\\operatorname{diag}(G))$', color=cmap(2))
+    # axes[3].fill_between(all_rescaling.mean(0), lw=3)
+    axes[1, 2].set_xlabel("teleport step", fontsize=fs)
+    axes[1, 2].grid(alpha=0.5)
+    axes[1, 2].set_title('Condition number', fontsize=fs+2)
+    axes[1, 2].legend(fontsize=fs)
 
     plt.suptitle('Two-moons experiment', fontsize=fs+3)
 
@@ -190,7 +220,7 @@ def plot_loss_dict(loss_histories, fs=15, figsize=(5, 5)):
     plt.show()
 
 
-plot_loss_dict(loss_histories, fs=16, figsize=(15, 5))
+plot_loss_dict(loss_histories, fs=16, figsize=(12, 7))
 
 
 # %%
