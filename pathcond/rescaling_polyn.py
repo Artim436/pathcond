@@ -4,6 +4,7 @@ import torch.nn as nn
 from tqdm import tqdm
 import math
 from pathcond.utils import _param_start_offsets
+from torch.nn.utils import parameters_to_vector, vector_to_parameters
 
 
 def grad_path_norm(model, device="cpu") -> torch.Tensor:
@@ -377,6 +378,36 @@ def compute_in_out_other_h(vect_b):
     return in_h, out_h, other_h
 
 
+# def reweight_model(model: nn.Module, BZ: torch.Tensor) -> nn.Module:
+#     """
+#     Reweight a model according to a log-rescaling vector BZ.
+
+#     Args:
+#         model (nn.Module): Pytorch model.
+#         BZ (torch.Tensor): log-rescaling vector of size [n_params].
+
+#     Returns:
+#         nn.Module: Reweighted model.
+#     """
+#     # Copie du modèle (mêmes poids, pas de lien mémoire)
+#     new_model = copy.deepcopy(model)
+
+#     # Vérification
+#     total_params = sum(p.numel() for p in model.parameters())
+#     assert BZ.numel() == total_params, \
+#         f"Taille de BZ {BZ.numel()} incompatible avec {total_params} paramètres"
+
+#     # On va parcourir les paramètres
+#     idx = 0
+#     for p in new_model.parameters():
+#         numel = p.numel()
+#         # On reshape la portion correspondante de BZ
+#         bz_chunk = BZ[idx:idx+numel].view_as(p.data)
+#         idx += numel
+#         # Multiplication
+#         p.data = p.data * torch.exp(-0.5 * bz_chunk)
+#     return new_model
+
 def reweight_model(model: nn.Module, BZ: torch.Tensor) -> nn.Module:
     """
     Reweight a model according to a log-rescaling vector BZ.
@@ -386,26 +417,65 @@ def reweight_model(model: nn.Module, BZ: torch.Tensor) -> nn.Module:
         BZ (torch.Tensor): log-rescaling vector of size [n_params].
 
     Returns:
-        nn.Module: Reweighted model.
+        nn.Module: Reweighted model (on same device as input model).
     """
-    # Copie du modèle (mêmes poids, pas de lien mémoire)
+    # Deep copy to avoid modifying the original
     new_model = copy.deepcopy(model)
 
-    # Vérification
-    total_params = sum(p.numel() for p in model.parameters())
-    assert BZ.numel() == total_params, \
-        f"Taille de BZ {BZ.numel()} incompatible avec {total_params} paramètres"
+    # Detect device of model
+    device = next(model.parameters()).device
+    new_model.to(device)
 
-    # On va parcourir les paramètres
-    idx = 0
-    for p in new_model.parameters():
-        numel = p.numel()
-        # On reshape la portion correspondante de BZ
-        bz_chunk = BZ[idx:idx+numel].view_as(p.data)
-        idx += numel
-        # Multiplication
-        p.data = p.data * torch.exp(-0.5 * bz_chunk)
+    # Flatten parameters into one vector
+    param_vec = parameters_to_vector(new_model.parameters())
+
+    # Ensure BZ is on same device and shape is correct
+    BZ = BZ.to(device)
+    assert BZ.shape == param_vec.shape, \
+        f"Taille de BZ {BZ.shape} incompatible avec {param_vec.shape}"
+
+    # Vectorized reweighting
+    reweighted_vec = param_vec * torch.exp(-0.5 * BZ)
+
+    # Copy back into model
+    vector_to_parameters(reweighted_vec, new_model.parameters())
+
     return new_model
+
+
+# def forward_with_rescaled(model: nn.Module, x: torch.Tensor, scaling: torch.Tensor):
+#     """
+#     Forward pass with rescaled model parameters.
+#     Gradients flow w.r.t model parameters; scaling is constant.
+
+#     Args:
+#         model (nn.Module): PyTorch model
+#         x (torch.Tensor): input
+#         scaling (torch.Tensor): scaling vector of size [n_params]
+
+#     Returns:
+#         torch.Tensor: model output
+#     """
+#     # Flatten model parameters
+#     param_vec = parameters_to_vector(model.parameters())
+#     scaling = scaling.to(param_vec.device)
+#     assert param_vec.shape == scaling.shape, "Scaling vector size mismatch"
+
+#     # Vectorized rescaling
+#     rescaled_vec = param_vec * scaling
+
+#     # Build dictionary of rescaled parameters for functional_call
+#     rescaled_params = {
+#         name: tensor.view_as(p).requires_grad_()
+#         for name, tensor, p in zip(
+#             [name for name, _ in model.named_parameters()],
+#             rescaled_vec.split([p.numel() for p in model.parameters()]),
+#             model.parameters()
+#         )
+#     }
+
+#     # Forward using functional_call
+#     return functional_call(model, rescaled_params, (x,))
 
 
 def hessian_2(model, inputs):
