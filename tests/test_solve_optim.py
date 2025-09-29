@@ -152,8 +152,7 @@ def update_z_polynomial(z, g, B):
     # Maintain BZ incrementally: BZ = B @ Z
     BZ = B @ z
     n_params_tensor = B.shape[0]
-    delta_total = 0.0
-    # y_bar = 0.0  # Track max for numerical stability (not strictly necessary)
+    y_bar = 0.0  # Track max for numerical stability (not strictly necessary)
     for h in range(H):
         # Column for neuron h
         b_h = B[:, h]  # shape: [m]
@@ -171,7 +170,7 @@ def update_z_polynomial(z, g, B):
         # Leave-one-out energy vector: exp( (B @ Z) - b_h * Z[h] ) * diag_G
         # Using the maintained BZ avoids a full matmul here.
         Y_h = BZ - b_h * z[h]  # shape: [m]
-        E = torch.exp(Y_h) * g  # shape: [m]
+        E = torch.exp(Y_h - y_bar) * g  # shape: [m]
 
         # Polynomial coefficients components
         # A_h is scalar (int), others are sums over selected rows of E
@@ -204,9 +203,9 @@ def update_z_polynomial(z, g, B):
                         f"Non-positive root {x} in linear case for neuron {h} at iter {k}, a={a}, b={b}, c={c}")
             else:
                 if abs(c) < 1e-20:
-                    raise ValueError(f"a = {a}, b = {b}, c = {c} all ~ 0 for neuron {h} at iter {k}")
+                    raise ValueError(f"a = {a}, b = {b}, c = {c} all ~ 0 for neuron {h}")
                 else:
-                    raise ValueError(f"a = {a}, b = {b} both ~ 0 but c = {c} != 0 for neuron {h} at iter {k}")
+                    raise ValueError(f"a = {a}, b = {b} both ~ 0 but c = {c} != 0 for neuron {h}")
         else:
             disc = torch.square(b) - 4.0 * a * c
             if disc > 0.0:
@@ -217,17 +216,17 @@ def update_z_polynomial(z, g, B):
                 if len(candidates) != 1:
                     print("candidates:", candidates, x1, x2, a, b, c)
                     raise ValueError(
-                        f"Unexpected number of positive roots {len(candidates)} for neuron {h} at iter {k}")
+                        f"Unexpected number of positive roots {len(candidates)} for neuron {h}")
                 z_new = torch.log(candidates[0])
             else:
-                raise ValueError(f"Negative or infinit discriminant {disc} in quadratic for neuron {h} at iter {k}")
+                raise ValueError(f"Negative or infinit discriminant {disc} in quadratic for neuron {h}")
         # Update Z[h] and incrementally refresh BZ
         delta = z_new - float(z[h])
         if delta != 0.0:
             BZ = BZ + b_h * delta  # rank-1 update instead of recomputing B @ Z
-            # if abs(z_new) > abs(Z[h]):
-            #     if z_new > y_bar:
-            #         y_bar = z_new
+            if abs(z_new) > abs(z[h]):
+                if z_new > y_bar:
+                    y_bar = z_new
             z[h] = z_new
     return z
 
