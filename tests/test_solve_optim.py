@@ -51,7 +51,7 @@ def loss(z, g, B):
         return n*torch.logsumexp(torch.log(g) + Bz, 0) - Bz.sum()
     else:
         v = g*torch.exp(Bz)
-        return n*torch.log(v.sum())
+        return n*torch.log(v.sum()) - Bz.sum()
 
 
 def optimize_neuron_rescaling_polynomial(z, g, B, n_iter=10, tol=1e-6, verbose=False):

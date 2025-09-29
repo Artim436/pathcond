@@ -14,7 +14,8 @@ setup(
         "matplotlib>=3.8",
         "tqdm>=4.66",
         "contextlib2>=0.6.0",
-        "pathlib-mate>=1.0.1"
+        "pathlib-mate>=1.0.1",
+        "scikit-learn>=1.3",
     ],
     extras_require={
         "dev": ["pytest>=8"],
