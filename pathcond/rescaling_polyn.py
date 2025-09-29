@@ -282,6 +282,73 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
     return BZ
 
 
+def optimize_rescaling_gd(model,
+                          lr=1e-2,
+                          n_iter=100,
+                          optimizer='SGD',
+                          tol=1e-6,
+                          verbose=False,
+                          to_log=False):
+
+    OPTIMIZERS = {'SGD': torch.optim.SGD,
+                  'Adam': torch.optim.Adam}
+    if to_log:
+        log = {}
+        losses = []
+
+    def loss(z, g, B):
+        # B is n times H
+        Bz = B @ z
+        n = B.shape[0]
+        if torch.all(g > 0):
+            return n*torch.logsumexp(torch.log(g) + Bz, 0) - Bz.sum()
+        else:
+            v = g*torch.exp(Bz)
+            return n*torch.log(v.sum())
+
+    device = next(model.parameters()).device
+    dtype = torch.float32
+
+    # Collect linear layers; exclude the final (output) layer from hidden count
+    linear_indices = [i for i, layer in enumerate(model.model) if isinstance(layer, nn.Linear)]
+    n_params = sum(p.numel() for p in model.parameters())
+    n_params_tensor = torch.tensor(n_params, dtype=dtype, device=device)
+    n_hidden_neurons = sum(model.model[i].out_features for i in linear_indices[:-1])
+
+    # Parameters to optimize
+    Z = torch.zeros(n_hidden_neurons, dtype=dtype, device=device, requires_grad=True)
+    if to_log:
+        with torch.no_grad():
+            losses.append(loss(Z, diag_G, B).item())
+
+    optimizer = OPTIMIZERS[optimizer]([Z], lr=lr)
+
+    # Problem-specific matrices/vectors
+    B = compute_matrix_B(model).to(device=device, dtype=dtype)     # shape: [m, n_hidden_neurons]
+    diag_G = compute_diag_G(model).to(device=device, dtype=dtype)  # shape: [m], elementwise factor
+
+    for i in range(n_iter):
+        # do gd pass
+        optimizer.zero_grad()
+        output = loss(Z, diag_G, B)
+        output.backward()
+        optimizer.step()
+        if to_log:
+            with torch.no_grad():
+                losses.append(loss(Z, diag_G, B).item())
+
+    BZ = B @ Z.clone().detach()
+    alpha = n_params/torch.sum(torch.exp(BZ) * diag_G).item()
+    if to_log:
+        log['loss'] = losses
+        log['Z'] = Z.clone().detach()
+        log['alpha'] = alpha
+
+    if to_log:
+        return BZ, log
+    return BZ
+
+
 def function_F(n, BZ, dG):
     first = n*(torch.logsumexp(BZ + torch.log(dG), axis=0) - math.log(n))
     second = torch.sum(BZ)
