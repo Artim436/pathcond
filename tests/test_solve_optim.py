@@ -54,99 +54,6 @@ def loss(z, g, B):
         return n*torch.log(v.sum()) - Bz.sum()
 
 
-def optimize_neuron_rescaling_polynomial(z, g, B, n_iter=10, tol=1e-6, verbose=False):
-
-    # Maintain BZ incrementally: BZ = B @ Z
-    BZ = B @ z
-    n_params_tensor = B.shape[0]
-    losses = []
-    losses.append(loss(z, g, B))
-    for k in range(n_iter):
-        delta_total = 0.0
-        # y_bar = 0.0  # Track max for numerical stability (not strictly necessary)
-        for h in range(H):
-            # Column for neuron h
-            b_h = B[:, h]  # shape: [m]
-
-            # Partition indices (must return index sets for rows of B/diag_G)
-            in_h, out_h, other_h = compute_in_out_other_h(b_h)
-
-            # Ensure torch index tensors on the right device
-            in_h_t = torch.as_tensor(in_h, dtype=torch.long)
-            out_h_t = torch.as_tensor(out_h, dtype=torch.long)
-            other_h_t = torch.as_tensor(other_h, dtype=torch.long)
-
-            card_in_h = int(in_h_t.numel())
-            card_out_h = int(out_h_t.numel())
-            # Leave-one-out energy vector: exp( (B @ Z) - b_h * Z[h] ) * diag_G
-            # Using the maintained BZ avoids a full matmul here.
-            Y_h = BZ - b_h * z[h]  # shape: [m]
-            E = torch.exp(Y_h) * g  # shape: [m]
-
-            # Polynomial coefficients components
-            # A_h is scalar (int), others are sums over selected rows of E
-            A_h = (card_in_h - card_out_h)
-            B_h = E[out_h_t].sum()
-
-            C_h = E[in_h_t].sum()
-            D_h = E[other_h_t].sum()
-
-            # Polynomial: P(X) = a*X^2 + b*X + c where
-            a = B_h * (A_h + n_params_tensor)
-            b = D_h * A_h
-            c = C_h * (A_h - n_params_tensor)
-
-            if a <= 0.0:
-                raise ValueError(
-                    f"Non-positive a={a} in quadratic for neuron {h} at iter {k}, A_h={A_h}, B_h={B_h}, C_h={C_h}, D_h={D_h}")
-            if c >= 0.0:
-                raise ValueError(
-                    f"Non-negative c={c} in quadratic for neuron {h} at iter {k}, A_h={A_h}, B_h={B_h}, C_h={C_h}, D_h={D_h}")
-
-            # Degenerate to linear if a ~ 0
-            if abs(a) < 1e-20:
-                if abs(b) >= 1e-20:
-                    x = -c / b
-                    if x > 0.0:
-                        z_new = torch.log(x)
-                    else:
-                        raise ValueError(
-                            f"Non-positive root {x} in linear case for neuron {h} at iter {k}, a={a}, b={b}, c={c}")
-                else:
-                    if abs(c) < 1e-20:
-                        raise ValueError(f"a = {a}, b = {b}, c = {c} all ~ 0 for neuron {h} at iter {k}")
-                    else:
-                        raise ValueError(f"a = {a}, b = {b} both ~ 0 but c = {c} != 0 for neuron {h} at iter {k}")
-            else:
-                disc = torch.square(b) - 4.0 * a * c
-                if disc > 0.0:
-                    sqrt_disc = torch.sqrt(disc)
-                    x1 = (-b + sqrt_disc) / (2.0 * a)
-                    x2 = (-b - sqrt_disc) / (2.0 * a)
-                    candidates = [x for x in (x1, x2) if x > 0.0]
-                    if len(candidates) != 1:
-                        print("candidates:", candidates, x1, x2, a, b, c)
-                        raise ValueError(
-                            f"Unexpected number of positive roots {len(candidates)} for neuron {h} at iter {k}")
-                    z_new = torch.log(candidates[0])
-                else:
-                    raise ValueError(f"Negative or infinit discriminant {disc} in quadratic for neuron {h} at iter {k}")
-            # Update Z[h] and incrementally refresh BZ
-            delta = z_new - float(Z[h])
-            if delta != 0.0:
-                delta_total += abs(delta)
-                BZ = BZ + b_h * delta  # rank-1 update instead of recomputing B @ Z
-                # if abs(z_new) > abs(Z[h]):
-                #     if z_new > y_bar:
-                #         y_bar = z_new
-                z[h] = z_new
-        losses.append(loss(z, g, B))
-        if delta_total < tol:
-            print(f"Converged after {k+1} iterations (delta_total={delta_total:.6e} < tol={tol})")
-            break
-    return z, losses
-
-
 def update_z_polynomial(z, g, B):
     # Do one pass on every z_h
     # Maintain BZ incrementally: BZ = B @ Z
@@ -236,7 +143,6 @@ n = 50
 H = 5
 g = torch.rand(n)
 g[0] = 0
-g[1] = 0
 print(g.min())
 B = generate_B((n, H))
 
@@ -254,12 +160,12 @@ loss_polym = []
 all_z_gd = []
 all_z_polym = []
 
-z = torch.zeros(H, dtype=torch.float, requires_grad=True)
-z_nograd = torch.zeros(H)
+z = torch.ones(H, dtype=torch.float, requires_grad=True)
+z_nograd = torch.ones(H)
 
 loss_zero = loss(torch.zeros(H), g, B)
 optimizer = OPTIMIZERS[optimizer_name]([z], lr=lr)
-max_iter = 80
+max_iter = 100
 
 loss_grad_descent.append(loss(z.clone().detach(), g, B))
 loss_polym.append(loss(z_nograd, g, B))
@@ -278,7 +184,7 @@ for i in range(max_iter):
     z_nograd = update_z_polynomial(z_nograd, g, B)
     loss_polym.append(loss(z_nograd, g, B))
     all_z_polym.append(z_nograd)
-# %%
+
 all_z_polym = torch.stack(all_z_polym, dim=0)
 all_z_gd = torch.stack(all_z_gd, dim=0)
 # %%

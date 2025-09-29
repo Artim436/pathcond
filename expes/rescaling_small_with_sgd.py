@@ -1,6 +1,6 @@
 # %%
 import torch
-from pathcond.rescaling_polyn import optimize_neuron_rescaling_polynomial, reweight_model, compute_diag_G, optimize_rescaling_gd
+from pathcond.rescaling_polyn import reweight_model, compute_diag_G, optimize_rescaling_gd
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -48,16 +48,17 @@ class SimpleNN(nn.Module):
 
 
 # %%
-nb_iter = 15
+nb_iter = 500
 lr = 0.05
-epochs = 2000
-rescale_every = 10
-# torch.manual_seed(3)
+lr_sgd = 1e-2
+epochs = 50
+rescale_every = 5
+torch.manual_seed(3)
 
 model_simple = SimpleNN()
 
-BZ_opt = optimize_neuron_rescaling_polynomial(
-    model=model_simple, n_iter=nb_iter, verbose=False, tol=1e-6)
+BZ_opt = optimize_rescaling_gd(
+    model=model_simple, lr=lr_sgd, n_iter=nb_iter, verbose=False, tol=1e-6)
 
 model_rescaled = reweight_model(model_simple, BZ_opt)
 model_teleport_first = copy.deepcopy(model_simple)
@@ -112,11 +113,7 @@ for model, name in zip(all_model, all_names):
 
         if name == "teleport" and (epoch+1) % rescale_every == 0:
             # print(model)
-            BZ_opt = optimize_neuron_rescaling_polynomial(
-                model=model,
-                n_iter=nb_iter,
-                verbose=False,
-                tol=1e-6)
+            BZ_opt = optimize_rescaling_gd(model=model, lr=lr_sgd, n_iter=nb_iter, verbose=False, tol=1e-6)
             st = time.time()
             param_vec = parameters_to_vector(model.parameters())
             rescaling = torch.exp(-0.5 * BZ_opt)
