@@ -49,6 +49,7 @@ class SimpleNN(nn.Module):
 
 # %%
 nb_iter = 500
+lr = 0.05
 lr_sgd = 1e-2
 epochs = 50
 rescale_every = 5
