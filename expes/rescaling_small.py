@@ -29,7 +29,7 @@ class SimpleNN(nn.Module):
     def __init__(self):
         super().__init__()
         self.model = nn.Sequential(
-            nn.Linear(2, 50),
+            nn.Linear(2, 5),
             nn.ReLU(),
             # nn.Linear(10, 5),
             # nn.ReLU(),
@@ -39,7 +39,7 @@ class SimpleNN(nn.Module):
             # nn.ReLU(),
             # nn.Linear(16, 16),
             # nn.ReLU(),
-            nn.Linear(50, 2)  # sortie binaire
+            nn.Linear(5, 2)  # sortie binaire
         )
 
     def forward(self, x, device='cpu'):
@@ -51,7 +51,7 @@ class SimpleNN(nn.Module):
 nb_iter = 15
 verbose = True
 lr = 0.05
-epochs = 1000
+epochs = 2000
 rescale_every = 10
 # torch.manual_seed(3)
 
@@ -194,8 +194,8 @@ def plot_loss_dict(loss_histories, fs=15, figsize=(5, 5)):
                     alpha=0.4)
 
     axes[1, 1].fill_between(range(len(to_plot)),
-                            all_rescaling.mean(1)-torch.std(all_rescaling, axis=1),
-                            all_rescaling.mean(1)-torch.std(all_rescaling, axis=1),
+                            all_diag_G.mean(1)-torch.std(all_diag_G, axis=1),
+                            all_diag_G.mean(1)+torch.std(all_diag_G, axis=1),
                             alpha=0.3,
                             color=cmap(1))
 
@@ -223,4 +223,6 @@ def plot_loss_dict(loss_histories, fs=15, figsize=(5, 5)):
 plot_loss_dict(loss_histories, fs=16, figsize=(12, 7))
 
 
+# %%
+all_diag_G.shape[1]*all_diag_G[-1]/(all_diag_G[-1].sum())
 # %%
