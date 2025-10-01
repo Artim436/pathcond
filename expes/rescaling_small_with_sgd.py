@@ -1,6 +1,6 @@
 # %%
 import torch
-from pathcond.rescaling_polyn import reweight_model, compute_diag_G, optimize_rescaling_gd
+from pathcond.rescaling_polyn import reweight_model, compute_diag_G, optimize_rescaling_gd, compute_matrix_B
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -31,8 +31,8 @@ class SimpleNN(nn.Module):
         self.model = nn.Sequential(
             nn.Linear(2, 5),
             nn.ReLU(),
-            # nn.Linear(10, 5),
-            # nn.ReLU(),
+            nn.Linear(5, 5),
+            nn.ReLU(),
             # nn.Linear(5, 5),
             # nn.ReLU(),
             # nn.Linear(5, 5),
@@ -48,11 +48,16 @@ class SimpleNN(nn.Module):
 
 
 # %%
+model = SimpleNN()
+B = compute_matrix_B(model).to(torch.float)
+# %%
+B.T @ torch.ones(B.shape[0])
+# %%
 nb_iter = 500
-lr = 0.05
-lr_sgd = 1e-2
-epochs = 50
-rescale_every = 5
+lr = 0.005
+lr_sgd = 1e-3
+epochs = 500
+rescale_every = 1
 torch.manual_seed(3)
 
 model_simple = SimpleNN()

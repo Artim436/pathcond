@@ -3,11 +3,12 @@
 import torch
 import matplotlib.pyplot as plt
 from pathcond.rescaling_polyn import compute_in_out_other_h
+import math
 
 
 def one_not_in_span_rank(B, tol=1e-8):
-    m = B.shape[0]
-    ones = torch.ones((m, 1), device=B.device)
+    n = B.shape[0]
+    ones = torch.ones((n, 1), device=B.device)
 
     # Compute ranks
     rank_B = torch.linalg.matrix_rank(B, tol=tol)
@@ -16,31 +17,40 @@ def one_not_in_span_rank(B, tol=1e-8):
     return rank_aug > rank_B
 
 
-def generate_B(shape, frac_neg=0.3, frac_zero=0.4, frac_pos=0.3, device="cpu", max_attempts=50):
+def generate_B(shape, frac_neg=0.3, frac_zero=0.4, frac_pos=0.3,
+               device="cpu", max_attempts=50):
+    m, n = shape
+    total = frac_neg + frac_zero + frac_pos
+    probs = torch.tensor([frac_neg, frac_zero, frac_pos], dtype=torch.float, device=device) / total
 
-    draw = True
     attempts = 0
-    while draw:
+    while True:
+        mat = torch.empty((m, n), device=device)
 
-        total = frac_neg + frac_zero + frac_pos
-        probs = torch.tensor([frac_neg, frac_zero, frac_pos], dtype=torch.float, device=device) / total
+        # Build each column with exact fractions
+        for j in range(n):
+            # counts
+            n_neg = int(round(probs[0].item() * m))
+            n_zero = int(round(probs[1].item() * m))
+            n_pos = m - n_neg - n_zero  # ensure sum matches exactly
 
-        # Possible values
-        values = torch.tensor([-1, 0, 1], device=device)
+            col = torch.cat([
+                -torch.ones(n_neg, device=device),
+                torch.zeros(n_zero, device=device),
+                torch.ones(n_pos, device=device)
+            ])
 
-        # Sample from categorical distribution
-        flat_samples = torch.multinomial(probs, num_samples=shape[0] * shape[1], replacement=True)
-        mat = values[flat_samples].reshape(shape).to(torch.float)
+            # Shuffle the column
+            perm = torch.randperm(m, device=device)
+            mat[:, j] = col[perm]
 
+        # Check span condition
         if one_not_in_span_rank(mat):
-            draw = False
-        else:
-            attempts += 1
+            return mat.to(torch.float)
 
+        attempts += 1
         if attempts >= max_attempts:
-            raise ValueError('Max attempts reached')
-
-    return mat
+            raise ValueError("Max attempts reached")
 
 
 def loss(z, g, B):
@@ -139,20 +149,29 @@ def update_z_polynomial(z, g, B):
 
 
 # %%
-n = 50
-H = 5
-g = torch.rand(n)
-g[0] = 0
-print(g.min())
-B = generate_B((n, H))
+n = 10
+H = 3
+a = 0
 
+b = 1
+g = (b-a)*torch.rand(n)+a
+B = generate_B((n, H), frac_neg=0.4, frac_zero=0.2, frac_pos=0.4)
+print(B.T @ torch.ones(B.shape[0]))
+# %%
+B
+# %%
+ones = torch.ones((n, 1))
+print(torch.linalg.matrix_rank(torch.cat([B, ones], dim=1)) - B.shape[0])
+
+
+# %%
 
 OPTIMIZERS = {'SGD': torch.optim.SGD,
               'Adam': torch.optim.Adam,
               'NAdam': torch.optim.NAdam,
               'LBFGS': torch.optim.LBFGS}
 
-lr = 1e-3
+lr = 5e-3
 optimizer_name = 'SGD'
 projection = True
 loss_grad_descent = []
@@ -160,10 +179,14 @@ loss_polym = []
 all_z_gd = []
 all_z_polym = []
 
-z = torch.ones(H, dtype=torch.float, requires_grad=True)
-z_nograd = torch.ones(H)
+z = torch.zeros(H, dtype=torch.float, requires_grad=True)
+z_nograd = torch.zeros(H)
 
 loss_zero = loss(torch.zeros(H), g, B)
+
+loss_test = B.shape[0] * math.log(B.shape[0]) + torch.log(g).sum()
+
+
 optimizer = OPTIMIZERS[optimizer_name]([z], lr=lr)
 max_iter = 100
 
@@ -196,6 +219,9 @@ ax[0].plot(loss_polym, '-', lw=2, label='Poly. update')
 
 ax[0].hlines(y=loss_zero, xmin=0, xmax=max(len(loss_polym), len(loss_grad_descent)) +
              1, linestyle='--', color='k', alpha=0.5, label='Loss at z = 0')
+# ax[0].hlines(y=loss_test, xmin=0, xmax=max(len(loss_polym), len(loss_grad_descent)) +
+#              1, linestyle='--', color='grey', alpha=0.5, label='$n \log(g_\min)$')
+
 ax[0].set_ylabel('Loss', fontsize=fs)
 ax[0].set_xlabel('iter', fontsize=fs)
 ax[0].legend(fontsize=fs)
@@ -231,8 +257,16 @@ plt.suptitle('Solving $\min_z \ n\log(\sum g_i \exp((Bz)_i)) - \sum (Bz)_i$', fo
 plt.tight_layout()
 # %%
 Bz_final = B @ z_nograd
-print(Bz_final)
 # %%
-Bz_final = B @ z
-print(Bz_final)
+B.T @ torch.ones(B.shape[0])
+# %%
+B.T @ torch.exp(Bz_final+torch.log(g))
+
+# %%
+
+print(torch.exp(-0.5*Bz_final))
+# print(B.T @ torch.exp(Bz_final*g))
+
+# %%
+z_nograd
 # %%

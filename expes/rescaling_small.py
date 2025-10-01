@@ -1,6 +1,6 @@
 # %%
 import torch
-from pathcond.rescaling_polyn import optimize_neuron_rescaling_polynomial, reweight_model, compute_diag_G, optimize_rescaling_gd
+from pathcond.rescaling_polyn import optimize_neuron_rescaling_polynomial, reweight_model, compute_diag_G, optimize_rescaling_gd, compute_matrix_B
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -13,7 +13,6 @@ from torch.nn.utils import parameters_to_vector, vector_to_parameters
 import time
 
 # %%
-# 1. Génération du dataset Two Moons
 X, y = make_moons(n_samples=1000, noise=0.2, random_state=42)
 X = torch.tensor(X, dtype=torch.float32)
 y = torch.tensor(y, dtype=torch.long)
@@ -22,24 +21,22 @@ X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.3, random_state=42
 )
 
-# 2. Définition du réseau
-
 
 class SimpleNN(nn.Module):
     def __init__(self):
         super().__init__()
         self.model = nn.Sequential(
-            nn.Linear(2, 5),
+            nn.Linear(2, 15),
             nn.ReLU(),
-            # nn.Linear(10, 5),
+            nn.Linear(15, 10),
+            nn.ReLU(),
+            nn.Linear(10, 5),
+            nn.ReLU(),
+            nn.Linear(5, 2),
             # nn.ReLU(),
-            # nn.Linear(5, 5),
+            # nn.Linear(10, 15),
             # nn.ReLU(),
-            # nn.Linear(5, 5),
-            # nn.ReLU(),
-            # nn.Linear(16, 16),
-            # nn.ReLU(),
-            nn.Linear(5, 2)  # sortie binaire
+            # nn.Linear(15, 2)
         )
 
     def forward(self, x, device='cpu'):
@@ -48,11 +45,17 @@ class SimpleNN(nn.Module):
 
 
 # %%
-nb_iter = 15
-lr = 0.05
-epochs = 2000
-rescale_every = 10
-# torch.manual_seed(3)
+model = SimpleNN()
+B = compute_matrix_B(model).to(torch.float)
+
+# %%
+B.T @ torch.ones(B.shape[0])
+# %%
+nb_iter = 10
+lr = 0.008
+epochs = 1500
+rescale_every = 50
+torch.manual_seed(3)
 
 model_simple = SimpleNN()
 
@@ -223,5 +226,5 @@ plot_loss_dict(loss_histories, fs=16, figsize=(12, 7))
 
 
 # %%
-all_diag_G.shape[1]*all_diag_G[-1]/(all_diag_G[-1].sum())
+diag_G*torch.exp(BZ_opt)
 # %%
