@@ -188,7 +188,7 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
     # Maintain BZ incrementally: BZ = B @ Z
     BZ = torch.zeros(n_params, dtype=dtype, device=device)
     OBJ = [function_F(n_params, BZ, diag_G).item()]
-    print(f"Initial obj: {OBJ[0]:.6f}")
+    # print(f"Initial obj: {OBJ[0]:.6f}")
     for k in range(n_iter):
         delta_total = 0.0
         y_bar = 0.0  # Track max for numerical stability (not strictly necessary)
@@ -276,7 +276,7 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
             break
     alpha = n_params/torch.sum(torch.exp(BZ) * diag_G).item()
     obj = function_F(n_params, BZ, diag_G).item()
-    print(f"Final obj: {obj:.6f}, alpha: {alpha:.6f}")
+    # print(f"Final obj: {obj:.6f}, alpha: {alpha:.6f}")
     if verbose:
         return BZ, Z, alpha, OBJ
     return BZ
