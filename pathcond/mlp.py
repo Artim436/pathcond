@@ -41,7 +41,85 @@ class MNISTMLP(nn.Module):
             else:
                 x = layer(x)
         return x
+
+class Moons_MLP(nn.Module):
+    """MLP for two moons (2 -> 32 -> 32 -> 1)."""
+    def __init__(self, d_hidden1: int = 32, d_hidden2: int = 32, seed: int = 0):
+        super(Moons_MLP, self).__init__()
+        torch.manual_seed(seed)
+
+        self.d_hidden1 = d_hidden1
+        self.d_hidden2 = d_hidden2
+
+        self.model = nn.Sequential(
+            nn.Linear(2, d_hidden1, bias=True),
+            nn.ReLU(),
+            nn.Linear(d_hidden1, d_hidden2, bias=True),
+            nn.ReLU(),
+            nn.Linear(d_hidden2, 2, bias=False),
+        )
+
+    def forward(self, x, device='cpu'):
+        x = x.to(device)
+        x = x.view(x.size(0), -1)
+        return self.model(x)
+
+    def forward_squared(self, x, device='cpu'):
+        ''' Forward by applying the rule "Linear -> weights**2, bias**2" '''
+        x = x.to(device)
+        x = x.view(x.size(0), -1)
+        for layer in self.model:
+            if isinstance(layer, nn.Linear):
+                W = layer.weight ** 2
+                b = layer.bias ** 2 if layer.bias is not None else None
+                x = F.linear(x, W, b)
+            else:
+                x = layer(x)
+        return x
     
+class Moons_MLP_unbalanced(nn.Module):
+    """MLP for two moons (2 -> 32 -> 32 -> 1)."""
+    def __init__(self, d_hidden1: int = 32, d_hidden2: int = 32, seed: int = 0):
+        super(Moons_MLP_unbalanced, self).__init__()
+        torch.manual_seed(seed)
+
+        self.d_hidden1 = d_hidden1
+        self.d_hidden2 = d_hidden2
+
+        self.model = nn.Sequential(
+            nn.Linear(2, d_hidden1, bias=True),
+            nn.ReLU(),
+            nn.Linear(d_hidden1, d_hidden2, bias=True),
+            nn.ReLU(),
+            nn.Linear(d_hidden2, d_hidden1, bias=True),
+            nn.ReLU(),
+            nn.Linear(d_hidden1, d_hidden2, bias=True),
+            nn.ReLU(),
+            nn.Linear(d_hidden2, d_hidden1, bias=True),
+            nn.ReLU(),
+            nn.Linear(d_hidden1, 2, bias=False),
+        )
+
+    def forward(self, x, device='cpu'):
+        x = x.to(device)
+        x = x.view(x.size(0), -1)
+        return self.model(x)
+
+    def forward_squared(self, x, device='cpu'):
+        ''' Forward by applying the rule "Linear -> weights**2, bias**2" '''
+        x = x.to(device)
+        x = x.view(x.size(0), -1)
+        for layer in self.model:
+            if isinstance(layer, nn.Linear):
+                W = layer.weight ** 2
+                b = layer.bias ** 2 if layer.bias is not None else None
+                x = F.linear(x, W, b)
+            else:
+                x = layer(x)
+        return x
+    
+
+   
 class toy_MLP(nn.Module):
     """Toy MLP for testing (10 -> 32 -> 1)."""
     def __init__(self, d_input: int = 2, d_hidden1: int = 2, seed: int = 0, teacher_init: bool = False):

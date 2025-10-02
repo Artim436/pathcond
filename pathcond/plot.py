@@ -5,7 +5,8 @@ import torch.nn as nn
 import os
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
-from utils import _ensure_outdir
+from pathcond.utils import _ensure_outdir
+from contextlib import nullcontext as _nullctx
 
 
 def plot_mean_var_curves(ACC=None,
@@ -331,4 +332,477 @@ def plot_rescaling_analysis(
 
 
 
+def plot_boxplots(
+    results,                 # torch.Tensor or np.ndarray: (n_lrs, n_runs, n_epochs, n_methods)
+    mood: str = "loss",      # "loss" or "accuracy"
+    n=None,
+    lrs_subset=None,         # indices OU valeurs si lr_values est fourni
+    box_width=0.65,
+    group_gap=1.3,
+    save_path="results/boxplots.pdf",
+    *,
+    lr_values=None,          # liste de valeurs de LR (len == n_lrs) ; sinon indices 0..n_lrs-1
+    last_k=1,               # nb d’epochs pour la moyenne finale
+    method_names=None,       # ex: ["sgd","adam","diag_up_sgd","diag_up_adam"]
+    method_order=None,       # ordre explicite des méthodes (liste de NOMS)
+    method_renames=None,     # dict {"old_name": "Pretty Name"}
+    ylim=None,
+    rotate_xticks=0,
+    dpi=300,
+    transparent=True,
+    fontsize=11
+):
+    """
+    results: tensor (n_lrs, n_runs, n_epochs, n_methods)
+    - Pour chaque lr et méthode, on récupère un vecteur (n_runs,) de 'final losses'
+      = moyenne sur les last_k derniers epochs par run.
 
+    lrs_subset: si lr_values est fourni -> sous-ensemble de VALEURS; sinon -> sous-ensemble d'indices.
+    """
+
+    # --------- Normalisation d'entrée ---------
+    if isinstance(results, torch.Tensor):
+        R = results.detach().cpu().numpy()
+    else:
+        R = np.asarray(results)
+
+    if R.ndim != 4:
+        raise ValueError(f"`results` doit être (n_lrs, n_runs, n_epochs, n_methods), reçu {R.shape}")
+
+    n_lrs, n_runs, n_epochs, n_methods = R.shape
+    k = int(min(last_k, max(1, n_epochs)))  # borne
+
+    # Méthodes: noms par défaut
+    if method_names is None:
+        method_names = [f"method_{i}" for i in range(n_methods)]
+    else:
+        if len(method_names) != n_methods:
+            raise ValueError("`method_names` doit avoir la taille n_methods = results.shape[-1].")
+
+    # Ordre des méthodes (sur les NOMS)
+    if method_order is None:
+        methods = list(method_names)
+    else:
+        # on garde uniquement celles présentes
+        methods = [m for m in method_order if m in method_names]
+        # et on ajoute les restantes pour éviter d'en perdre
+        methods += [m for m in method_names if m not in methods]
+
+    # LRs: valeurs affichées
+    if lr_values is None:
+        lr_vals = np.arange(n_lrs, dtype=float)
+    else:
+        lr_vals = np.asarray(lr_values, dtype=float)
+        if lr_vals.shape[0] != n_lrs:
+            raise ValueError("`lr_values` doit avoir la longueur n_lrs = results.shape[0].")
+
+    # Sélection des LRs
+    if lrs_subset is not None:
+        subset = np.array(list(lrs_subset))
+        if lr_values is None:
+            # sous-ensemble d'indices
+            lr_idx_all = np.unique(subset.astype(int))
+        else:
+            # sous-ensemble de VALEURS -> map vers indices
+            idx_map = {v: i for i, v in enumerate(lr_vals)}
+            try:
+                lr_idx_all = np.array([idx_map[float(v)] for v in subset], dtype=int)
+            except KeyError as e:
+                raise ValueError(f"Valeur de LR non trouvée dans `lr_values`: {e}")
+    elif n is not None:
+        # n premiers (dans l'ordre croissant des valeurs de LR)
+        lr_idx_all = np.argsort(lr_vals)[:int(n)]
+    else:
+        lr_idx_all = np.arange(n_lrs, dtype=int)
+
+    # Renommage légende
+    method_renames = method_renames or {}
+    legend_names = [method_renames.get(m, m) for m in methods]
+
+    # --------- Construire data & positions ---------
+    positions, data, method_indices = [], [], []
+    intra_step = 1.0  # écart intra-groupe (entre méthodes)
+    M = len(methods)
+
+    # map nom->index colonne méthode dans results
+    name_to_col = {name: idx for idx, name in enumerate(method_names)}
+
+    for i, lr_idx in enumerate(lr_idx_all):
+        group_start = i * (intra_step * M + group_gap)
+        # pour chaque méthode dans l'ordre demandé
+        for j, m_name in enumerate(methods):
+            if m_name not in name_to_col:
+                continue
+            m_col = name_to_col[m_name]
+
+            # (n_runs, n_epochs) -> moyenne sur les k derniers epochs
+            runs_series = R[lr_idx, :, :, m_col]  # shape (n_runs, n_epochs)
+            tail = runs_series[:, -k:]            # (n_runs, k)
+            vals = np.nanmean(tail, axis=1)       # (n_runs,)
+
+            # filtrer les +/- inf / NaN
+            vals = np.asarray(vals, dtype=float)
+            vals = vals[np.isfinite(vals)]
+            if vals.size == 0:
+                continue
+
+            positions.append(group_start + j * intra_step)
+            data.append(vals)
+            method_indices.append(j)
+
+    if not data:
+        raise ValueError("Aucune donnée exploitable (vérifie lrs_subset, NaN/Inf, last_k, etc.).")
+
+    # --------- Style & tracé ---------
+    # petit contexte sans dépendre d'objets externes (neurips_rc)
+    _ctx = _nullctx()
+
+    with _ctx:
+        fig = plt.figure(figsize=(12, 6))
+        ax = plt.gca()
+
+        bp = ax.boxplot(
+            data,
+            positions=positions,
+            widths=box_width,
+            patch_artist=True,
+            showfliers=True
+        )
+
+        # Palette stable (tab10)
+        colors = plt.cm.tab10(np.linspace(0, 1, max(10, M)))[:M]
+
+        for i_box, box in enumerate(bp['boxes']):
+            m_idx = method_indices[i_box]
+            box.set_facecolor(colors[m_idx])
+            box.set_alpha(0.85)
+            box.set_linewidth(0.9)
+
+        for med in bp['medians']:
+            med.set_linewidth(1.6)
+
+        for whisk in bp['whiskers']:
+            whisk.set_linewidth(0.9)
+        for cap in bp['caps']:
+            cap.set_linewidth(0.9)
+
+        for fl in bp.get('fliers', []):
+            fl.set_markersize(2.5)
+            fl.set_alpha(0.6)
+
+        # Grille Y + log
+        ax.grid(axis='y', linestyle='--', linewidth=0.6, alpha=0.4)
+        # ax.set_yscale('log')
+        if ylim is not None:
+            ax.set_ylim(*ylim)
+
+        # Ticks X: un par groupe de LR
+        xticks = [
+            i * (intra_step * M + group_gap) + intra_step * (M - 1) / 2
+            for i in range(len(lr_idx_all))
+        ]
+        lr_labels = lr_vals[lr_idx_all]
+        xtick_labels = [
+            (f"{v:.0e}" if v < 1e-2 else f"{v:.3f}".rstrip('0').rstrip('.'))
+            for v in lr_labels
+        ]
+        ax.set_xticks(xticks, xtick_labels)
+        if rotate_xticks:
+            plt.setp(ax.get_xticklabels(), rotation=rotate_xticks, ha='right')
+
+        ax.set_xlabel("Learning rate")
+        ax.set_ylabel(f"Final {'loss' if mood=='loss' else 'accuracy'} (mean over last "f"{k} epochs)")
+
+        # Légende (ordre méthodes + couleurs cohérentes)
+        legend_handles = []
+        for name, c in zip(legend_names, colors[:M]):
+            disp = name
+            if disp == 1:
+                disp = "Baseline (no rescale)"
+            if disp == "diag_up_sgd":
+                disp = r"Path Dyn.$\mathbf{(Ours)}$"
+            if disp == "diag_up_adam":
+                disp = r"Path Dyn. Adam$\mathbf{(Ours)}$"
+            h, = ax.plot([], [], linewidth=8, color=c, label=disp)
+            legend_handles.append(h)
+        ax.legend(handles=legend_handles, title="Methods", ncol=min(4, M))
+
+        # fig.tight_layout()
+
+
+        # Sauvegarde
+        if save_path:
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            ext = os.path.splitext(save_path)[1].lower()
+            if ext in [".png", ".jpg", ".jpeg"]:
+                fig.savefig(save_path, dpi=dpi, transparent=transparent, bbox_inches="tight")
+            else:
+                fig.savefig(save_path, transparent=transparent, bbox_inches="tight")
+
+        plt.show()
+
+
+
+def plot_boxplots_ax(
+    ax,
+    results,                 # (n_lrs, n_runs, n_epochs, n_methods)
+    mood: str = "loss",      # "loss" ou "accuracy"
+    n=None,
+    lrs_subset=None,
+    box_width=0.65,
+    group_gap=1.3,
+    *,
+    lr_values=None,          # valeurs des LRs; sinon indices 0..n_lrs-1
+    last_k=1,
+    method_names=None,       # ex: ["sgd","adam","diag_up_sgd","diag_up_adam"]
+    method_order=None,       # ordre explicite (liste de NOMS)
+    method_renames=None,     # {"old": "Pretty"}
+    ylim=None,
+    rotate_xticks=0,
+    fontsize=11,
+    colors=None,             # optionnel: palette commune pour tous les panels
+    showfliers=True
+):
+    """Trace un boxplot groupé sur l'Axes `ax`.
+    Retourne un dict avec infos utiles (limites y, handles de légende, etc.)."""
+
+    # --------- Normalisation d'entrée ---------
+    if isinstance(results, torch.Tensor):
+        R = results.detach().cpu().numpy()
+    else:
+        R = np.asarray(results)
+
+    if R.ndim != 4:
+        raise ValueError(f"`results` doit être (n_lrs, n_runs, n_epochs, n_methods), reçu {R.shape}")
+
+    n_lrs, n_runs, n_epochs, n_methods = R.shape
+    k = int(min(last_k, max(1, n_epochs)))  # borne
+
+    # Méthodes: noms par défaut
+    if method_names is None:
+        method_names = [f"method_{i}" for i in range(n_methods)]
+    else:
+        if len(method_names) != n_methods:
+            raise ValueError("`method_names` doit avoir la taille n_methods = results.shape[-1].")
+
+    # Ordre des méthodes
+    if method_order is None:
+        methods = list(method_names)
+    else:
+        methods = [m for m in method_order if m in method_names]
+        methods += [m for m in method_names if m not in methods]
+
+    # LRs: valeurs affichées
+    if lr_values is None:
+        lr_vals = np.arange(n_lrs, dtype=float)
+    else:
+        lr_vals = np.asarray(lr_values, dtype=float)
+        if lr_vals.shape[0] != n_lrs:
+            raise ValueError("`lr_values` doit avoir longueur n_lrs = results.shape[0].")
+
+    # Sélection des LRs
+    if lrs_subset is not None:
+        subset = np.array(list(lrs_subset))
+        if lr_values is None:
+            lr_idx_all = np.unique(subset.astype(int))
+        else:
+            idx_map = {float(v): i for i, v in enumerate(lr_vals)}
+            try:
+                lr_idx_all = np.array([idx_map[float(v)] for v in subset], dtype=int)
+            except KeyError as e:
+                raise ValueError(f"Valeur de LR non trouvée dans `lr_values`: {e}")
+    elif n is not None:
+        lr_idx_all = np.argsort(lr_vals)[:int(n)]
+    else:
+        lr_idx_all = np.arange(n_lrs, dtype=int)
+
+    # Renommage légende
+    method_renames = method_renames or {}
+    legend_names = [method_renames.get(m, m) for m in methods]
+    for i, name in enumerate(legend_names):
+        if name == 1:
+            legend_names[i] = "Baseline (no rescale)"
+        if name == "diag_up_sgd":
+            legend_names[i] = r"Path Dyn.$\mathbf{(Ours)}$"
+        if name == "diag_up_adam":
+            legend_names[i] = r"Path Dyn. Adam$\mathbf{(Ours)}$"
+
+    # --------- Construire data & positions ---------
+    positions, data, method_indices = [], [], []
+    intra_step = 1.0  # écart intra-groupe (entre méthodes)
+    M = len(methods)
+
+    name_to_col = {name: idx for idx, name in enumerate(method_names)}
+
+    for i, lr_idx in enumerate(lr_idx_all):
+        group_start = i * (intra_step * M + group_gap)
+        for j, m_name in enumerate(methods):
+            if m_name not in name_to_col:
+                continue
+            m_col = name_to_col[m_name]
+
+            runs_series = R[lr_idx, :, :, m_col]  # (n_runs, n_epochs)
+            tail = runs_series[:, -k:]            # (n_runs, k)
+            vals = np.nanmean(tail, axis=1)       # (n_runs,)
+
+            vals = np.asarray(vals, dtype=float)
+            vals = vals[np.isfinite(vals)]
+            if vals.size == 0:
+                continue
+
+            positions.append(group_start + j * intra_step)
+            data.append(vals)
+            method_indices.append(j)
+
+    if not data:
+        raise ValueError("Aucune donnée exploitable (vérifie lrs_subset, NaN/Inf, last_k, etc.).")
+
+    # --------- Tracé ---------
+    bp = ax.boxplot(
+        data,
+        positions=positions,
+        widths=box_width,
+        patch_artist=True,
+        showfliers=showfliers
+    )
+
+    # Palette stable (tab10) — commune entre panels si fournie
+    if colors is None:
+        colors = plt.cm.tab10(np.linspace(0, 1, max(10, M)))[:M]
+
+    for i_box, box in enumerate(bp['boxes']):
+        m_idx = method_indices[i_box]
+        box.set_facecolor(colors[m_idx])
+        box.set_alpha(0.85)
+        box.set_linewidth(0.9)
+
+    for med in bp['medians']:
+        med.set_linewidth(1.6)
+    for whisk in bp['whiskers']:
+        whisk.set_linewidth(0.9)
+    for cap in bp['caps']:
+        cap.set_linewidth(0.9)
+    for fl in bp.get('fliers', []):
+        fl.set_markersize(2.5)
+        fl.set_alpha(0.6)
+
+    # Grille & axes
+    ax.grid(axis='y', linestyle='--', linewidth=0.6, alpha=0.4)
+    if ylim is not None:
+        ax.set_ylim(*ylim)
+
+    # Ticks X (un par groupe de LR)
+    xticks = [i*(intra_step*M + group_gap) + intra_step*(M-1)/2 for i in range(len(lr_idx_all))]
+    lr_labels = lr_vals[lr_idx_all]
+    xtick_labels = [(f"{v:.0e}" if v < 1e-2 else f"{v:.3f}".rstrip('0').rstrip('.')) for v in lr_labels]
+    ax.set_xticks(xticks, xtick_labels)
+    if rotate_xticks:
+        plt.setp(ax.get_xticklabels(), rotation=rotate_xticks, ha='right')
+
+    ax.set_xlabel("Learning rate", fontsize=fontsize)
+    ax.set_ylabel(f"Final {'loss' if mood=='loss' else 'accuracy'} (mean over last {k} epochs)", fontsize=fontsize)
+
+    # Légende (mêmes couleurs que boxes)
+    legend_handles = []
+    for m_idx, name in enumerate(legend_names):
+        disp = name
+        if disp == 1:
+            disp = "Baseline (no rescale)"
+        if disp == "diag_up_sgd":
+            disp = r"Path Dyn.$\mathbf{(Ours)}$"
+        h, = ax.plot([], [], linewidth=8, color=colors[m_idx], label=disp)
+        legend_handles.append(h)
+
+    return {
+        "handles": legend_handles,
+        "labels": legend_names,
+        "ylim": ax.get_ylim(),
+        "colors": colors,
+    }
+
+# ---------------------------------------------
+# 2) Composite 2×2 : balanced/unbalanced × loss/accuracy
+# ---------------------------------------------
+def plot_boxplots_2x2(
+    LOSS_bal, ACC_bal, LOSS_unb, ACC_unb,
+    *,
+    method_names,
+    method_order=None,
+    method_renames=None,
+    lr_values=None,
+    last_k=1,
+    lrs_subset=None,
+    figsize=(12, 8),
+    share_ylim_loss=True,
+    share_ylim_acc=True,
+    rotate_xticks=0,
+    out_pdf="images/boxplots_moons_2x2.pdf",
+    out_png="images/boxplots_moons_2x2.png",
+    dpi=300,
+    transparent=True
+):
+    # Palette commune à tous les panels
+    n_methods = LOSS_bal.shape[-1]
+    colors = plt.cm.tab10(np.linspace(0, 1, max(10, n_methods)))[:n_methods]
+
+    fig, axes = plt.subplots(2, 2, figsize=figsize, constrained_layout=True)
+
+    info00 = plot_boxplots_ax(
+        axes[0,0], LOSS_bal, mood="loss",
+        lr_values=lr_values, last_k=last_k, lrs_subset=lrs_subset,
+        method_names=method_names, method_order=method_order, method_renames=method_renames,
+        rotate_xticks=rotate_xticks, colors=colors
+    )
+    axes[0,0].set_title("Balanced — Loss")
+
+    info01 = plot_boxplots_ax(
+        axes[0,1], ACC_bal, mood="accuracy",
+        lr_values=lr_values, last_k=last_k, lrs_subset=lrs_subset,
+        method_names=method_names, method_order=method_order, method_renames=method_renames,
+        rotate_xticks=rotate_xticks, colors=colors
+    )
+    axes[0,1].set_title("Balanced — Accuracy")
+
+    info10 = plot_boxplots_ax(
+        axes[1,0], LOSS_unb, mood="loss",
+        lr_values=lr_values, last_k=last_k, lrs_subset=lrs_subset,
+        method_names=method_names, method_order=method_order, method_renames=method_renames,
+        rotate_xticks=rotate_xticks, colors=colors
+    )
+    axes[1,0].set_title("Unbalanced — Loss")
+
+    info11 = plot_boxplots_ax(
+        axes[1,1], ACC_unb, mood="accuracy",
+        lr_values=lr_values, last_k=last_k, lrs_subset=lrs_subset,
+        method_names=method_names, method_order=method_order, method_renames=method_renames,
+        rotate_xticks=rotate_xticks, colors=colors
+    )
+    axes[1,1].set_title("Unbalanced — Accuracy")
+
+    # Légende commune (en haut)
+    handles = info00["handles"]
+    labels  = info00["labels"]
+    fig.legend(handles, labels, title="Methods", ncol=min(4, len(labels)), loc="center")
+
+    # Harmoniser les Y si demandé
+    if share_ylim_loss:
+        y0 = axes[0,0].get_ylim(); y1 = axes[1,0].get_ylim()
+        common = (min(y0[0], y1[0]), max(y0[1], y1[1]))
+        axes[0,0].set_ylim(common); axes[1,0].set_ylim(common)
+
+    if share_ylim_acc:
+        y0 = axes[0,1].get_ylim(); y1 = axes[1,1].get_ylim()
+        common = (min(y0[0], y1[0]), max(y0[1], y1[1]))
+        axes[0,1].set_ylim(common); axes[1,1].set_ylim(common)
+
+    fig.suptitle("Boxplots par learning rate et par méthode", fontsize=14)
+
+    # Sauvegardes
+    if out_pdf:
+        Path(os.path.dirname(out_pdf)).mkdir(parents=True, exist_ok=True)
+        fig.savefig(out_pdf, transparent=transparent, bbox_inches="tight")
+    if out_png:
+        Path(os.path.dirname(out_png)).mkdir(parents=True, exist_ok=True)
+        fig.savefig(out_png, dpi=dpi, transparent=transparent, bbox_inches="tight")
+
+    return fig, axes

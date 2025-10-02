@@ -25,6 +25,9 @@ setup(
             "mnist-train = cli:main",
             "compare-g-diag-g = plot_diag_vs_full:main",
             "mnist-plot-curves = cli_plot:main",
+            "moons-multi-lr = pathcond.cli_train_multi_lr_moons:main",
+            "moons-boxplots = pathcond.cli_boxplots_moons:main",
+
         ],
     },
 )
