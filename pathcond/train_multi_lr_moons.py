@@ -38,7 +38,7 @@ def fit_with_telportation(
       loss_adam, loss_ref_adam, acc_adam, acc_ref_adam
     """
     adam = False
-    learning_rates = torch.logspace(-4, -1, nb_lr)
+    learning_rates = torch.logspace(-4, 0, nb_lr)
     if adam:
         ACC = torch.zeros((nb_lr, nb_iter, epochs, 4))  # sgd, ref_sgd, adam, ref_adam
         LOSS = torch.zeros((nb_lr, nb_iter, epochs, 4))

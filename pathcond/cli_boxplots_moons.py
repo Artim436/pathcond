@@ -24,7 +24,7 @@ def main():
         method_names = ["diag_up_sgd", 1]
 
     nb_lr = LOSS_bal.shape[0]
-    learning_rates = torch.logspace(-4, -1, nb_lr).numpy()
+    learning_rates = torch.logspace(-4, 0, nb_lr).numpy()
 
     plot_boxplots_2x2(
         LOSS_bal, ACC_bal, LOSS_unb, ACC_unb,
@@ -32,7 +32,7 @@ def main():
         method_order=None,             # ou liste explicite
         method_renames={1: "Baseline"},# renommages jolis si tu veux
         lr_values=learning_rates,
-        last_k=1,
+        last_k=5,
         lrs_subset=None,               # ou ex: [1e-4, 1e-3, 1e-2]
         figsize=(12, 8),
         rotate_xticks=0,

@@ -16,7 +16,7 @@ moons-multi-lr --epochs 1500 --frac 1 --nb-lr 5  --teleport-epoch 0 --nb-iter-op
 ```
 
 
-## Plot curves accuracy and lost MNIST
+## Plot curves accuracy and lost MNIST boxplots Moons
 
 ```bash
 mnist-plot-curves
