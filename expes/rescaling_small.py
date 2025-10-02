@@ -55,7 +55,7 @@ nb_iter = 10
 lr = 0.008
 epochs = 1500
 rescale_every = 50
-torch.manual_seed(3)
+torch.manual_seed(50)
 
 model_simple = SimpleNN()
 
