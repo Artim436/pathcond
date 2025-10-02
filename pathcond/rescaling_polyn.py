@@ -209,6 +209,7 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
             # Leave-one-out energy vector: exp( (B @ Z) - b_h * Z[h] ) * diag_G
             # Using the maintained BZ avoids a full matmul here.
             Y_h = BZ - b_h * Z[h]  # shape: [m]
+            y_bar = Y_h.max()
             E = torch.exp(Y_h - y_bar) * diag_G  # shape: [m]
 
             # Polynomial coefficients components
@@ -264,9 +265,9 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
             if delta != 0.0:
                 delta_total += abs(delta)
                 BZ = BZ + b_h * delta  # rank-1 update instead of recomputing B @ Z
-                if abs(z_new) > abs(Z[h]):
-                    if z_new > y_bar:
-                        y_bar = z_new
+                # if abs(z_new) > abs(Z[h]):
+                #     if z_new > y_bar:
+                #         y_bar = z_new
                 Z[h] = z_new
                 if verbose:
                     obj = function_F(n_params, BZ, diag_G).item()

@@ -47,7 +47,13 @@ def fit_with_telportation(
         LOSS = torch.zeros((nb_lr, nb_iter, epochs, 2))
 
     
+    X, y = make_moons(n_samples=1000, noise=0.1, random_state=0)
+    X = torch.tensor(X, dtype=torch.float32)
+    y = torch.tensor(y, dtype=torch.long)
 
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.3, random_state=42
+    )
 
     for lr_index, lr in enumerate(learning_rates):
         for it in range(nb_iter):
@@ -108,13 +114,7 @@ def fit_with_telportation(
 
             # data
             
-            X, y = make_moons(n_samples=1000, noise=0.1, random_state=0)
-            X = torch.tensor(X, dtype=torch.float32)
-            y = torch.tensor(y, dtype=torch.long)
 
-            X_train, X_test, y_train, y_test = train_test_split(
-                X, y, test_size=0.3, random_state=42
-            )
 
 
             ep_teleport = [ep_teleport] if isinstance(ep_teleport, int) else ep_teleport
