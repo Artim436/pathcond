@@ -160,14 +160,12 @@ def update_z_polynomial_jit(z, g, B):
 
     mask_in = (B == -1)
     mask_out = (B == 1)
-    mask_other = (B == 0)
     card_in = mask_in.sum(dim=0)   # [H]
     card_out = mask_out.sum(dim=0)  # [H]
 
     for h in range(H):
         b_h = B[:, h]
 
-        # directly use precomputed card
         A_h = int(card_in[h].item()) - int(card_out[h].item())
 
         # Leave-one-out energy vector
@@ -178,7 +176,8 @@ def update_z_polynomial_jit(z, g, B):
         # sums using masks
         B_h = (E * mask_out[:, h]).sum()
         C_h = (E * mask_in[:, h]).sum()
-        D_h = (E * mask_other[:, h]).sum()
+        # D_h = rest of elements
+        D_h = E.sum() - B_h - C_h
 
         # Polynomial coefficients
         a = B_h * (A_h + n_params_tensor)
@@ -201,8 +200,8 @@ def update_z_polynomial_jit(z, g, B):
 
 
 # %%
-n = 512
-H = 256
+n = 100
+H = 20
 a = 0
 b = 1
 g = (b-a)*torch.rand(n)+a
@@ -211,6 +210,8 @@ z = torch.randn(H)
 
 z_new = update_z_polynomial(z, g, B)
 z_new_jit = update_z_polynomial_jit(z, g, B)
+
+
 # %%
 print(z_new_jit-z_new)
 # %%
