@@ -153,8 +153,10 @@ def update_z_polynomial_jit(z, g, B):
     # Do one pass on every z_h
     # Maintain BZ incrementally: BZ = B @ Z
     BZ = B @ z
+
     n_params_tensor = B.shape[0]
     H = B.shape[1]
+    # BZ = torch.zeros(n_params_tensor)
 
     mask_in = (B == -1)
     mask_out = (B == 1)
@@ -242,7 +244,6 @@ for r in range(n_repeat):
                     print((r, n, H))
                     raise e
 
-# %%
 
 # %%
 cmap = plt.cm.get_cmap('tab10')
