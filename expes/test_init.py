@@ -9,6 +9,7 @@ import seaborn as sns
 import pandas as pd
 
 
+
 class MLP(nn.Sequential):
     def __init__(
         self,
@@ -57,12 +58,16 @@ def apply_init(model: nn.Module, scheme: str, gain: float = None) -> None:
                 nn.init.uniform_(m.weight, a=-0.05, b=0.05)
             elif scheme == "normal":
                 nn.init.normal_(m.weight, mean=0.0, std=0.02)
-            elif scheme == "zeros":
-                nn.init.zeros_(m.weight)
             elif scheme == "default":
                 pass  # laisse les poids tels quels
             elif scheme == "orthogonal":
                 nn.init.orthogonal_(m.weight, gain=gain if gain is not None else 1.0)
+            elif scheme == "ones":
+                nn.init.ones_(m.weight)
+            elif scheme == "twos":
+                nn.init.constant_(m.weight, 2.0)
+            elif scheme == "constant_0.5":
+                nn.init.constant_(m.weight, 0.5)
             else:
                 raise ValueError(f"Schéma d'init inconnu: {scheme}")
 
@@ -102,12 +107,13 @@ def run_grid(
 
             dG = compute_diag_G(model)  # Tensor de taille [#params] ou shape compatible
 
+            # outF = function_F(num_params(model), torch.zeros(num_params(model), device=device), dG)
+
 
             with torch.no_grad():
                 P = num_params(model)
                 BZ = torch.zeros(P, device=device)
 
-            outF = function_F(P, BZ, dG)
 
             BZ_opt = optimize_neuron_rescaling_polynomial(
                 model=model,
@@ -123,38 +129,57 @@ def run_grid(
 
             # assert torch.allclose(new_dG, new_dG_model, atol=1e-5), "Incohérence entre dG recalculé et dG via modèle rescalé"
 
-            outF2 = function_F(P, BZ_opt, dG)
+            #outF2 = function_F(P, BZ_opt, dG)
 
-            res = torch.abs(outF2 - outF) / torch.abs(outF)
+            rescaling = torch.exp(-0.5 * BZ_opt)
+            rescaling_normalized = rescaling / torch.sum(rescaling)
+
+            u = torch.full_like(rescaling_normalized, 1.0 / P)
+
+            kl_hm = torch.sum((rescaling_normalized*torch.log(rescaling_normalized/ u)))
+
+
 
             results.append({
                 "architecture": arch,
                 "init": init_name,
                 "num_params": P,
-                "F_output": res,
+                "F_output": kl_hm.item(),
             })
 
 
     return results
 
 
-def plot_boxplot(df: pd.DataFrame, title: str = "Distribution of F_output over 10 runs"):
+def plot_boxplot(
+    df: pd.DataFrame,
+    title: str = "Distribution of F_output over 10 runs",
+    init_name_map: dict = None,
+    save_path: str = "init_comparison_boxplot.pdf",
+):
     """
     Crée un boxplot soigné pour comparer F_output entre architectures et initialisations.
+    Enregistre automatiquement la figure au format PDF vectoriel (qualité publication).
 
     Args:
-        df (pd.DataFrame): DataFrame contenant les colonnes ["init", "arch_str", "F_output"].
-        title (str): Titre du graphique.
+        df (pd.DataFrame): contient les colonnes ["init", "arch_str", "F_output"].
+        title (str): titre du graphique.
+        init_name_map (dict, optional): mapping pour renommer les initialisations.
+        save_path (str): chemin du fichier de sortie (.pdf ou .png).
     """
-
-    # Style général (inspiré des figures de conf)
-    sns.set_theme(style="whitegrid", context="talk", font_scale=1.3)
+    # Style général
+    sns.set_theme(style="whitegrid", context="talk", font_scale=1.4)
     plt.figure(figsize=(12, 6))
 
-    # Couleurs par architecture
+    # Palette
     palette = sns.color_palette("viridis", df["arch_str"].nunique())
 
-    # Boxplot avec éléments esthétiques
+    # Renommage des initialisations si nécessaire
+    if init_name_map is not None:
+        df = df.copy()
+        df["init"] = df["init"].map(init_name_map).fillna(df["init"])
+
+    # Boxplot principal
     ax = sns.boxplot(
         data=df,
         x="init",
@@ -163,10 +188,10 @@ def plot_boxplot(df: pd.DataFrame, title: str = "Distribution of F_output over 1
         palette=palette,
         linewidth=1.5,
         fliersize=3,
-        boxprops=dict(alpha=0.8)
+        boxprops=dict(alpha=0.85)
     )
 
-    # Ajout des points individuels (jitter léger)
+    # Ajout des points individuels
     sns.stripplot(
         data=df,
         x="init",
@@ -174,47 +199,64 @@ def plot_boxplot(df: pd.DataFrame, title: str = "Distribution of F_output over 1
         hue="arch_str",
         dodge=True,
         jitter=0.15,
-        alpha=0.4,
+        alpha=0.45,
         size=4,
         palette=palette,
         ax=ax
     )
 
-    # Gestion des légendes (fusion hue)
+    # Légende : fusion des deux appels (box + strip)
     handles, labels = ax.get_legend_handles_labels()
     n_arch = df["arch_str"].nunique()
-    plt.legend(handles[:n_arch], labels[:n_arch],
-               title="Architecture",
-               bbox_to_anchor=(1.02, 1),
-               loc="upper left",
-               borderaxespad=0.)
+    legend = plt.legend(
+        handles[:n_arch], labels[:n_arch],
+        title="Architecture",
+        bbox_to_anchor=(1.05, 1),
+        loc="upper left",
+        borderaxespad=0.,
+        frameon=True,
+        fancybox=True,
+        shadow=False,
+        fontsize=12,
+        title_fontsize=13,
+    )
 
-    # Mise en forme du graphique
+    # Axes & titre
     plt.xticks(rotation=25, ha="right")
-    plt.xlabel("Initialization scheme", fontsize=14, labelpad=10)
-    plt.ylabel("Relative difference in F", fontsize=14, labelpad=10)
+    plt.xlabel("Initialization scheme", fontsize=15, labelpad=10)
+    plt.ylabel("KL divergence", fontsize=15, labelpad=10)
     plt.title(title, fontsize=18, pad=15, weight="bold")
 
     # Alléger le fond
     sns.despine(trim=True)
-    plt.tight_layout()
+
+    # Ajustement des marges pour légende externe
+    plt.tight_layout(rect=[0, 0, 0.87, 1])  # laisse de l’espace à droite pour la légende
+
+    # Sauvegarde (PDF vectoriel haute qualité)
+    plt.savefig(save_path, bbox_inches="tight", dpi=300, transparent=True)
     plt.show()
+
 
 
 
 
 if __name__ == "__main__":
     architectures = [
-        [2, 10, 10, 2],
-        [2, 20, 2],
-        [2, 10, 5, 10, 5, 10, 2]
+        [2, 8, 8, 8, 2],
+        [2, 32, 2],
+        [2, 10, 5, 10, 5, 10, 2],
+        [2, 16, 8, 2],
     ]
     inits = [
         "xavier_uniform",
         "xavier_normal",
         "kaiming_uniform",
         "kaiming_normal",
-        "default"
+        "orthogonal",
+        "uniform",
+        "normal",
+        "ones"
     ]
 
     n_runs = 10
@@ -237,4 +279,18 @@ if __name__ == "__main__":
     print("\n=== Moyenne et écart-type sur 10 runs ===")
     print(stats)
 
-    plot_boxplot(df, title="Distribution of Relative Difference in F over 10 runs")
+    init_names = {
+    "xavier_uniform": "Xavier U.",
+    "kaiming_normal": "Kaiming N.",
+    "orthogonal": "Orthogonal",
+    "uniform": "Uniform",
+    "normal": "Normal",
+    "ones": "Ones",
+    "twos": "Twos",
+    "constant_0.5": "Const 0.5",
+    "default": "Kaiming U. (default)",
+    "kaiming_uniform": "Kaiming U. (default)",
+    "xavier_normal": "Xavier N."
+}
+
+    plot_boxplot(df, title="Distribution of KL Divergence between the scaling and the uniform over 10 runs", init_name_map=init_names)

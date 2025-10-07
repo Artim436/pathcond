@@ -168,7 +168,7 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
     """
     # --- Setup: device/dtype and network structure ---
     device = next(model.parameters()).device
-    dtype = torch.float32
+    dtype = torch.double
 
     # Collect linear layers; exclude the final (output) layer from hidden count
     linear_indices = [i for i, layer in enumerate(model.model) if isinstance(layer, nn.Linear)]
@@ -211,19 +211,20 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
             Y_h = BZ - b_h * Z[h]  # shape: [m]
             y_bar = Y_h.max()
             E = torch.exp(Y_h - y_bar) * diag_G  # shape: [m]
+            E = E.to(dtype=dtype)
 
             # Polynomial coefficients components
             # A_h is scalar (int), others are sums over selected rows of E
             A_h = (card_in_h - card_out_h)
-            B_h = E[out_h_t].sum()
+            B_h = E[out_h_t].sum().to(dtype=dtype)
 
-            C_h = E[in_h_t].sum()
-            D_h = E[other_h_t].sum()
+            C_h = E[in_h_t].sum().to(dtype=dtype)
+            D_h = E[other_h_t].sum().to(dtype=dtype)
 
             # Polynomial: P(X) = a*X^2 + b*X + c where
-            a = B_h * (A_h + n_params_tensor)
-            b = D_h * A_h
-            c = C_h * (A_h - n_params_tensor)
+            a = (B_h * (A_h + n_params_tensor)).to(dtype=dtype)
+            b = (D_h * A_h).to(dtype=dtype)
+            c = (C_h * (A_h - n_params_tensor)).to(dtype=dtype)
 
             if a <= 0.0:
                 raise ValueError(
@@ -233,8 +234,8 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
                     f"Non-negative c={c} in quadratic for neuron {h} at iter {k}, A_h={A_h}, B_h={B_h}, C_h={C_h}, D_h={D_h}")
 
             # Degenerate to linear if a ~ 0
-            if abs(a) < 1e-20:
-                if abs(b) >= 1e-20:
+            if abs(a) < 1e-25:
+                if abs(b) >= 1e-25:
                     x = -c / b
                     if x > 0.0:
                         z_new = torch.log(x)
@@ -242,7 +243,7 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
                         raise ValueError(
                             f"Non-positive root {x} in linear case for neuron {h} at iter {k}, a={a}, b={b}, c={c}")
                 else:
-                    if abs(c) < 1e-20:
+                    if abs(c) < 1e-25:
                         raise ValueError(f"a = {a}, b = {b}, c = {c} all ~ 0 for neuron {h} at iter {k}")
                     else:
                         raise ValueError(f"a = {a}, b = {b} both ~ 0 but c = {c} != 0 for neuron {h} at iter {k}")
