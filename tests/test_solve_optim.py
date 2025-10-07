@@ -149,12 +149,14 @@ def update_z_polynomial(z, g, B):
 
 
 # %%
-n = 10
-H = 3
-a = 0
+n = 100
+H = 5
+a = 1e5
 
 b = 1
 g = (b-a)*torch.rand(n)+a
+g[:50] = 0
+print(g)
 B = generate_B((n, H), frac_neg=0.4, frac_zero=0.2, frac_pos=0.4)
 print(B.T @ torch.ones(B.shape[0]))
 # %%

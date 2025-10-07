@@ -10,6 +10,22 @@ import torch.optim as optim
 import torch.nn as nn
 from pathcond.rescaling_polyn import optimize_neuron_rescaling_polynomial, reweight_model, compute_diag_G, optimize_rescaling_gd, compute_matrix_B
 import torch
+import numpy as np
+# # %%
+# a = 0.04231291636824608
+# b = 1074.84521484375
+# c = -0.06107430160045624
+# np.roots([a, b, c])
+# # %%
+# a_t = torch.Tensor([a]).to(torch.float64)
+# b_t = torch.Tensor([b]).to(torch.float64)
+# c_t = torch.Tensor([c]).to(torch.float64)
+# disc = b_t**2 - 4.0 * a_t * c_t
+# sqrt_disc = torch.sqrt(disc)
+# x1 = (-b_t + sqrt_disc) / (2.0 * a_t)
+# x2 = (-b_t - sqrt_disc) / (2.0 * a_t)
+# print(x1)
+# %%
 
 
 def fisher_diag(model, X):
@@ -41,60 +57,16 @@ def fisher_diag(model, X):
     return diag
 
 
-@torch.jit.script
-def one_pass_z(z, BZ, g, B, mask_in, mask_out, card_in, card_out):
-    # Do one pass on every z_h
-    # Maintain BZ incrementally: BZ = B @ Z
-    n_params_tensor = g.shape[0]
-    H = z.shape[0]
-    # BZ = torch.zeros(n_params_tensor)
-
-    for h in range(H):
-        b_h = B[:, h]
-
-        A_h = int(card_in[h].item()) - int(card_out[h].item())
-
-        # Leave-one-out energy vector
-        Y_h = BZ - b_h * z[h]
-        y_bar = Y_h.max()
-        E = torch.exp(Y_h - y_bar) * g
-
-        # sums using masks
-        B_h = (E * mask_out[:, h]).sum()
-        C_h = (E * mask_in[:, h]).sum()
-        # D_h = rest of elements
-        D_h = E.sum() - B_h - C_h
-
-        # Polynomial coefficients
-        a = B_h * (A_h + n_params_tensor)
-        b = D_h * A_h
-        c = C_h * (A_h - n_params_tensor)
-
-        disc = b * b - 4.0 * a * c
-        sqrt_disc = torch.sqrt(disc)
-        x1 = (-b + sqrt_disc) / (2.0 * a)
-        x2 = (-b - sqrt_disc) / (2.0 * a)
-
-        z_new = torch.log(torch.maximum(x1, x2))
-
-        # Update Z[h] and incrementally refresh BZ
-        delta = z_new - z[h]
-        BZ = BZ + b_h * delta
-        z[h] = z_new
-
-    return z, BZ
-
-
-def rescaling(model,
-              X=None,
-              method='path',
-              n_iter=10,
-              tol=1e-6,
-              reg=None):
+def rescaling_nn(model,
+                 X=None,
+                 method='path',
+                 n_iter=10,
+                 tol=1e-6,
+                 reg=None):
 
     # --- Setup: device/dtype and network structure ---
     device = next(model.parameters()).device
-    dtype = torch.float32
+    dtype = torch.float64
 
     # Collect linear layers; exclude the final (output) layer from hidden count
     linear_indices = [i for i, layer in enumerate(model.model) if isinstance(layer, nn.Linear)]
@@ -124,7 +96,6 @@ def rescaling(model,
     # print(f"Initial obj: {OBJ[0]:.6f}")
     for k in range(n_iter):
         znew, BZ = one_pass_z(zold, BZ, diag_G, B, mask_in, mask_out, card_in, card_out)
-        print(znew)
         delta_total = torch.linalg.norm(znew - zold)
         if delta_total < tol:
             print(f"Converged after {k+1} iterations (delta_total={delta_total:.6e} < tol={tol})")
@@ -136,9 +107,64 @@ def rescaling(model,
     return BZ
 
 
-# %%
+def one_pass_z(z, BZ, g, B, mask_in, mask_out, card_in, card_out):
+    # Do one pass on every z_h
+    # Maintain BZ incrementally: BZ = B @ Z
+    n_params_tensor = g.shape[0]
+    H = z.shape[0]
+    # BZ = torch.zeros(n_params_tensor)
+
+    for h in range(H):
+        b_h = B[:, h]
+
+        A_h = int(card_in[h].item()) - int(card_out[h].item())
+
+        # Leave-one-out energy vector
+        Y_h = BZ - b_h * z[h]
+        y_bar = Y_h.max()
+        E = torch.exp(Y_h - y_bar) * g
+
+        # sums using masks
+        B_h = (E * mask_out[:, h]).sum()
+        C_h = (E * mask_in[:, h]).sum()
+        # D_h = rest of elements
+        D_h = E.sum() - B_h - C_h
+
+        # Polynomial coefficients
+        a = B_h * (A_h + n_params_tensor)
+        b = D_h * A_h
+        c = C_h * (A_h - n_params_tensor)
+
+        disc = b**2 - 4.0 * a * c
+        sqrt_disc = torch.sqrt(disc)
+        x1 = (-b + sqrt_disc) / (2.0 * a)
+        x2 = (-b - sqrt_disc) / (2.0 * a)
+
+        z_new = torch.log(torch.maximum(x1, x2))
+
+        # Update Z[h] and incrementally refresh BZ
+        delta = z_new - z[h]
+        BZ = BZ + b_h * delta
+        z[h] = z_new
+        if BZ.isnan().any():
+            # print('iter = {}'.format(h))
+            # print('disc = {}'.format(disc))
+            print('a = {}, b = {}, c = {}'.format(a, b, c))
+            # print('A_h = {}, B_h = {}, C_h = {}, D_h = {}'.format(A_h, B_h, C_h, D_h))
+            # print('z_new = {}'.format(z_new))
+            print('x1, x2 = {}'.format((x1, x2)))
+            # print('E = {}'.format(E))
+            # print('disc - b = {}'.format(disc-b))
+            print('sqrt_disc = {}'.format(sqrt_disc))
+            print('ac = {}'.format(b**2 - 4.0*a*c))
+            # print('E * mask_out[:, h] = {}'.format(E * mask_out[:, h]))
+            raise ValueError('Nan in BZ')
+
+    return z, BZ
+
+
 X, y = make_moons(n_samples=1000, noise=0.2, random_state=42)
-X = torch.tensor(X, dtype=torch.float32)
+X = torch.tensor(X, dtype=torch.float64)
 y = torch.tensor(y, dtype=torch.long)
 
 X_train, X_test, y_train, y_test = train_test_split(
@@ -168,24 +194,17 @@ class SimpleNN(nn.Module):
         return self.model(x)
 
 
-# %%
 nb_iter = 10
-lr = 0.001
+lr = 0.005
 epochs = 2000
-rescale_every = 20
+rescale_every = 50
+reg = 1e-4
+method = 'fisher'
 torch.manual_seed(50)
 
-model_simple = SimpleNN()
-# %%
-compute_diag_G(model_simple)
-# %%
-fisher_diag(model_simple, X_train)
-# %%
-BZ_opt = rescaling(model=model_simple, X=X_train, method="fisher", n_iter=nb_iter, tol=1e-6, reg=1e-1)
-# %%
-BZ_opt
+model_simple = SimpleNN().double()
+BZ_opt = rescaling_nn(model=model_simple, X=X_train, method=method, n_iter=nb_iter, tol=1e-6, reg=reg)
 
-# %%
 model_rescaled = reweight_model(model_simple, BZ_opt)
 model_teleport_first = copy.deepcopy(model_simple)
 model_teleport_second = copy.deepcopy(model_simple)
@@ -239,13 +258,15 @@ for model, name in zip(all_model, all_names):
 
         if name == "teleport" and (epoch+1) % rescale_every == 0:
             # print(model)
-            BZ_opt = rescaling(
+            BZ_opt = rescaling_nn(
                 model=model,
                 X=X_train,
-                method="fisher"
+                method=method,
                 n_iter=nb_iter,
                 tol=1e-6,
-                reg=1e-2)
+                reg=reg)
+            if BZ_opt.isnan().any():
+                raise ValueError('Nan in BZ')
             st = time.time()
             param_vec = parameters_to_vector(model.parameters())
             rescaling = torch.exp(-0.5 * BZ_opt)
@@ -341,7 +362,7 @@ def plot_loss_dict(loss_histories, fs=15, figsize=(5, 5)):
     axes[1, 2].set_title('Condition number', fontsize=fs+2)
     axes[1, 2].legend(fontsize=fs)
 
-    plt.suptitle('Two-moons experiment', fontsize=fs+3)
+    plt.suptitle('Two-moons experiment with Fisher rescaling', fontsize=fs+3)
 
     plt.tight_layout()
 

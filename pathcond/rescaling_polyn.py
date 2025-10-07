@@ -306,7 +306,7 @@ def optimize_rescaling_gd(model,
             return n*torch.logsumexp(torch.log(g) + Bz, 0) - Bz.sum()
         else:
             v = g*torch.exp(Bz)
-            return n*torch.log(v.sum())
+            return n*torch.log(v.sum()) - Bz.sum()
 
     device = next(model.parameters()).device
     dtype = torch.float32
