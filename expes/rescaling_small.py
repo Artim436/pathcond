@@ -13,22 +13,25 @@ from torch.nn.utils import parameters_to_vector, vector_to_parameters
 import time
 
 # %%
-X, y = make_moons(n_samples=1000, noise=0.2, random_state=42)
+X, y = make_moons(n_samples=1000, noise=0.3, random_state=42)
 X = torch.tensor(X, dtype=torch.float32)
 y = torch.tensor(y, dtype=torch.long)
 
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.3, random_state=42
 )
+# %%
+plt.scatter(X[:, 0], X[:, 1])
 
 
+# %%
 class SimpleNN(nn.Module):
     def __init__(self):
         super().__init__()
         self.model = nn.Sequential(
-            nn.Linear(2, 15),
+            nn.Linear(2, 10),
             nn.ReLU(),
-            nn.Linear(15, 10),
+            nn.Linear(10, 10),
             nn.ReLU(),
             nn.Linear(10, 5),
             nn.ReLU(),
@@ -52,8 +55,8 @@ B = compute_matrix_B(model).to(torch.float)
 B.T @ torch.ones(B.shape[0])
 # %%
 nb_iter = 10
-lr = 0.0001
-epochs = 20000
+lr = 0.05
+epochs = 15000
 rescale_every = 2000
 torch.manual_seed(50)
 
@@ -146,7 +149,11 @@ def plot_loss_dict(loss_histories, fs=15, figsize=(5, 5)):
     n = len(loss_histories)
     fig, axes = plt.subplots(2, 3, figsize=figsize)
     for model_name in all_names:
-        if model_name in ['vanilla', 'init. rescaled', 'teleport']:
+        if model_name in [
+            'vanilla',
+            'init. rescaled',
+            'teleport'
+        ]:
             loss_history = loss_histories[(model_name, 'loss')]
             test_acc = loss_histories[(model_name, 'acc_test')]
             train_acc = loss_histories[(model_name, 'acc_train')]
