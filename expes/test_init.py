@@ -243,10 +243,8 @@ def plot_boxplot(
 
 if __name__ == "__main__":
     architectures = [
-        [2, 8, 8, 8, 2],
-        [2, 32, 2],
-        [2, 10, 5, 10, 5, 10, 2],
-        [2, 16, 8, 2],
+        [2, 1000, 1000, 1000, 2],
+        [1000, 8, 8, 8, 10],
     ]
     inits = [
         "xavier_uniform",
@@ -259,7 +257,7 @@ if __name__ == "__main__":
         "ones"
     ]
 
-    n_runs = 10
+    n_runs = 3
     all_results = []
 
     for i in range(n_runs):

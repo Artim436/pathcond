@@ -13,8 +13,8 @@ from torch.nn.utils import parameters_to_vector, vector_to_parameters
 import time
 
 # %%
-X, y = make_moons(n_samples=1000, noise=0.3, random_state=42)
-X = torch.tensor(X, dtype=torch.float32)
+X, y = make_moons(n_samples=1000, noise=0.1, random_state=42)
+X = torch.tensor(X, dtype=torch.float)
 y = torch.tensor(y, dtype=torch.long)
 
 X_train, X_test, y_train, y_test = train_test_split(
@@ -29,13 +29,11 @@ class SimpleNN(nn.Module):
     def __init__(self):
         super().__init__()
         self.model = nn.Sequential(
-            nn.Linear(2, 10),
+            nn.Linear(2, 16),
             nn.ReLU(),
-            nn.Linear(10, 10),
+            nn.Linear(16, 8),
             nn.ReLU(),
-            nn.Linear(10, 5),
-            nn.ReLU(),
-            nn.Linear(5, 2),
+            nn.Linear(8, 2),
             # nn.ReLU(),
             # nn.Linear(10, 15),
             # nn.ReLU(),
@@ -49,21 +47,25 @@ class SimpleNN(nn.Module):
 
 # %%
 model = SimpleNN()
+
 B = compute_matrix_B(model).to(torch.float)
 
 # %%
 B.T @ torch.ones(B.shape[0])
 # %%
 nb_iter = 10
-lr = 0.05
-epochs = 15000
-rescale_every = 2000
+lr = 0.01
+epochs = 1500
+rescale_every = 200
 torch.manual_seed(50)
 
 model_simple = SimpleNN()
+# for m in model_simple.modules():
+#     if isinstance(m, nn.Linear):
+#         nn.init.normal_(m.weight, mean=0.0, std=0.02)
 
 BZ_opt = optimize_neuron_rescaling_polynomial(
-    model=model_simple, n_iter=nb_iter, verbose=False, tol=1e-6)
+    model=model_simple, n_iter=nb_iter, verbose=False, tol=1e-6).to(torch.float)
 
 model_rescaled = reweight_model(model_simple, BZ_opt)
 model_teleport_first = copy.deepcopy(model_simple)
@@ -122,7 +124,7 @@ for model, name in zip(all_model, all_names):
                 model=model,
                 n_iter=nb_iter,
                 verbose=False,
-                tol=1e-6)
+                tol=1e-6).to(torch.float)
             st = time.time()
             param_vec = parameters_to_vector(model.parameters())
             rescaling = torch.exp(-0.5 * BZ_opt)
