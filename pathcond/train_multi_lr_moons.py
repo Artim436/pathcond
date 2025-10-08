@@ -128,7 +128,7 @@ def fit_with_telportation(
                         variants["sgd"]["model"], verbose=False, soft=True, name="sgd", nb_iter=nb_iter_optim_rescaling, device=device, data=data
                     )
                     end_teleport = time.time()
-                    print(f"Rescaling applied in {end_teleport - start_teleport:.2f} seconds.")
+                    # print(f"Rescaling applied in {end_teleport - start_teleport:.2f} seconds.")
                     variants["sgd"]["optimizer"] = torch.optim.SGD(
                         variants["sgd"]["model"].parameters(), lr=lr
                     )
@@ -163,7 +163,7 @@ def fit_with_telportation(
                         v["hist_acc"].append(accuracy)
 
             end = time.time()
-            print(f"Training completed in {end - start:.2f} seconds.")
+            print(f"Training completed in {end - start:.2f} seconds. (lr={lr:.4f}, iter={it})")
 
             # --- restitue EXACTEMENT les mêmes éléments et dans le même ordre
             loss_history = variants["sgd"]["hist_loss"]
@@ -205,8 +205,7 @@ def rescaling_path_dynamics(model, verbose: bool = False, soft: bool = True, nb_
     if verbose:
         print(f"   Modèle créé avec {sum(p.numel() for p in model.parameters())} paramètres")
         # print(f"   Architecture: {model}")
-    else:
-        print(f"✅ Modèle initialisé ({sum(p.numel() for p in model.parameters())} paramètres)")
+
 
     # 3. Optimisation séquentielle
     if verbose:
@@ -228,7 +227,7 @@ def rescaling_path_dynamics(model, verbose: bool = False, soft: bool = True, nb_
         print("\n4. Vérification de la préservation de la sortie finale...")
     final_output = final_model.forward(inputs, device=device)
     torch.allclose(original_output, final_output, atol=1e-5)
-    print("✅ Sortie finale préservée après rescaling.")
+    # print("✅ Sortie finale préservée après rescaling.")
 
     return final_model
 

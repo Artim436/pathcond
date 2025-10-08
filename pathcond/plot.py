@@ -7,14 +7,18 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 from pathcond.utils import _ensure_outdir
 from contextlib import nullcontext as _nullctx
+from matplotlib.lines import Line2D
+
 
 
 def plot_mean_var_curves(ACC=None,
                          LOSS=None,
                          mood: str = "loss",            # "loss" or "accuracy"
                          ep_teleport: int = 1,
-                         outdir: str = "results/",
-                         fname_prefix: str = "curve"):
+                         outdir: str = "images/",
+                         fname_prefix: str = "curve",
+                         lr= None,
+                         balanced=None):
     """
     Plot mean ± std over runs for up to 4 series:
       index 0: SGD (ours)       | index 1: Ref SGD
@@ -98,7 +102,7 @@ def plot_mean_var_curves(ACC=None,
         if (np.allclose(y, 0.0) and np.allclose(s, 0.0)) or np.all(~np.isfinite(y)):
             continue
 
-        ax.plot(x, y, marker=markers[c % len(markers)],
+        ax.plot(x, y, 
                 linestyle=linestyles[c % len(linestyles)],
                 label=labels[c])
         ax.fill_between(x, y - s, y + s, alpha=0.2)
@@ -108,6 +112,7 @@ def plot_mean_var_curves(ACC=None,
         ax.axvline(x=ep_teleport, linestyle="--", linewidth=1.5, color="black",
                    label="Rescaling applied")
 
+
     ax.set_xlabel("Epoch")
     if mood == "accuracy":
         ax.set_ylabel("Accuracy")
@@ -115,12 +120,16 @@ def plot_mean_var_curves(ACC=None,
         ax.set_ylim(0.0, 1.0)
     else:
         ax.set_ylabel("Loss")
-        ax.set_title("Training Loss (mean ± std)")
+        if lr is not None and balanced is not None:
+            ax.set_title(f"Training Loss (mean ± std) — LR={lr:.0e} - {'Balanced' if balanced else 'Unbalanced'}")
+        else:
+            ax.set_title("Training Loss (mean ± std)")
         ax.set_yscale("log")
 
     # Nice epoch ticks
     step = max(1, int(np.ceil(epochs / 10)))
     ax.set_xticks(np.arange(1, epochs + 1, step))
+    ax.set_xscale("log")
 
     ax.legend(loc="best", frameon=False)
     fig.tight_layout()
@@ -561,7 +570,8 @@ def plot_boxplots_ax(
     rotate_xticks=0,
     fontsize=11,
     colors=None,             # optionnel: palette commune pour tous les panels
-    showfliers=True
+    showfliers=True,
+    yscale='linear'  # ou 'log'
 ):
     """Trace un boxplot groupé sur l'Axes `ax`.
     Retourne un dict avec infos utiles (limites y, handles de légende, etc.)."""
@@ -626,6 +636,14 @@ def plot_boxplots_ax(
             legend_names[i] = r"Path Dyn.$\mathbf{(Ours)}$"
         if name == "diag_up_adam":
             legend_names[i] = r"Path Dyn. Adam$\mathbf{(Ours)}$"
+        if name == "baseline":
+            legend_names[i] = "Baseline (no rescale)"
+        if name == "pathcond":
+            legend_names[i] = r"Path Dyn.$\mathbf{(Ours)}$"
+        if name == "equinorm":
+            legend_names[i] = r"EquiNorm"
+        if name=="extreme":
+            legend_names[i] = r"$\lambda \to 0 (\mathbf{Ours})$"
 
     # --------- Construire data & positions ---------
     positions, data, method_indices = [], [], []
@@ -701,6 +719,8 @@ def plot_boxplots_ax(
 
     ax.set_xlabel("Learning rate", fontsize=fontsize)
     ax.set_ylabel(f"Final {'loss' if mood=='loss' else 'accuracy'} (mean over last {k} epochs)", fontsize=fontsize)
+    if yscale in ('linear', 'log'):
+        ax.set_yscale(yscale)
 
     # Légende (mêmes couleurs que boxes)
     legend_handles = []
@@ -732,77 +752,448 @@ def plot_boxplots_2x2(
     lr_values=None,
     last_k=1,
     lrs_subset=None,
-    figsize=(12, 8),
+    figsize=(18, 5),            # ← (1) plus large, moins haut
     share_ylim_loss=True,
     share_ylim_acc=True,
-    rotate_xticks=0,
+    rotate_xticks=30,           # ← (2) rotation par défaut
     out_pdf="images/boxplots_moons_2x2.pdf",
     out_png="images/boxplots_moons_2x2.png",
     dpi=300,
-    transparent=True
+    transparent=True,
+    patience=100, rel_tol=0.0, abs_tol=0.1, min_epoch=0, final_k=10,
 ):
-    # Palette commune à tous les panels
     n_methods = LOSS_bal.shape[-1]
     colors = plt.cm.tab10(np.linspace(0, 1, max(10, n_methods)))[:n_methods]
 
-    fig, axes = plt.subplots(2, 2, figsize=figsize, constrained_layout=True)
+    # Constrained layout OK, mais on garde la main sur les marges
+    fig, axes = plt.subplots(1, 3, figsize=figsize, constrained_layout=False)
 
     info00 = plot_boxplots_ax(
-        axes[0,0], LOSS_bal, mood="loss",
+        axes[0], LOSS_bal, mood="loss",
         lr_values=lr_values, last_k=last_k, lrs_subset=lrs_subset,
         method_names=method_names, method_order=method_order, method_renames=method_renames,
         rotate_xticks=rotate_xticks, colors=colors
     )
-    axes[0,0].set_title("Balanced — Loss")
+    axes[0].set_title("Train Loss")
+
+    plot_convergence_vs_final_boxplots_ax(
+        axes[1], LOSS_bal,
+        method_names=method_names, method_order=method_order, method_renames=method_renames,
+        lr_values=lr_values, lrs_subset=lrs_subset,
+        patience=patience, rel_tol=rel_tol, abs_tol=abs_tol, min_epoch=min_epoch, final_k=final_k,
+        rotate_xticks=rotate_xticks, colors=colors
+    )
+    axes[1].set_title("Epochs to convergence (loss)")
 
     info01 = plot_boxplots_ax(
-        axes[0,1], ACC_bal, mood="accuracy",
+        axes[2], ACC_bal, mood="accuracy",
         lr_values=lr_values, last_k=last_k, lrs_subset=lrs_subset,
         method_names=method_names, method_order=method_order, method_renames=method_renames,
         rotate_xticks=rotate_xticks, colors=colors
     )
-    axes[0,1].set_title("Balanced — Accuracy")
+    axes[2].set_title("Test Accuracy")
 
-    info10 = plot_boxplots_ax(
-        axes[1,0], LOSS_unb, mood="loss",
-        lr_values=lr_values, last_k=last_k, lrs_subset=lrs_subset,
-        method_names=method_names, method_order=method_order, method_renames=method_renames,
-        rotate_xticks=rotate_xticks, colors=colors
-    )
-    axes[1,0].set_title("Unbalanced — Loss")
+    # (2) Pivoter + aligner les labels x et micro-marges
+    for ax in axes:
+        for lab in ax.get_xticklabels():
+            lab.set_rotation(rotate_xticks)
+            lab.set_horizontalalignment('center')
+        ax.margins(x=0.02)
+        ax.grid(axis='y', linestyle=':', linewidth=0.6, alpha=0.6)  # petit plus esthétique
+        ax.spines['top'].set_visible(False)                         # désépaissir
+        ax.spines['right'].set_visible(False)
 
-    info11 = plot_boxplots_ax(
-        axes[1,1], ACC_unb, mood="accuracy",
-        lr_values=lr_values, last_k=last_k, lrs_subset=lrs_subset,
-        method_names=method_names, method_order=method_order, method_renames=method_renames,
-        rotate_xticks=rotate_xticks, colors=colors
-    )
-    axes[1,1].set_title("Unbalanced — Accuracy")
-
-    # Légende commune (en haut)
+    # (4) Légende commune en dessous
     handles = info00["handles"]
     labels  = info00["labels"]
-    fig.legend(handles, labels, title="Methods", ncol=min(4, len(labels)), loc="center")
+    fig.legend(
+        handles, labels, title="Methods",
+        ncol=min(5, len(labels)),
+        loc="upper center", bbox_to_anchor=(0.5, 0.0), frameon=False
+    )
 
-    # Harmoniser les Y si demandé
-    if share_ylim_loss:
-        y0 = axes[0,0].get_ylim(); y1 = axes[1,0].get_ylim()
-        common = (min(y0[0], y1[0]), max(y0[1], y1[1]))
-        axes[0,0].set_ylim(common); axes[1,0].set_ylim(common)
+    # (3) Espace en bas pour ticks + légende
+    fig.subplots_adjust(bottom=0.1, wspace=0.2)
 
-    if share_ylim_acc:
-        y0 = axes[0,1].get_ylim(); y1 = axes[1,1].get_ylim()
-        common = (min(y0[0], y1[0]), max(y0[1], y1[1]))
-        axes[0,1].set_ylim(common); axes[1,1].set_ylim(common)
-
-    fig.suptitle("Boxplots par learning rate et par méthode", fontsize=14)
-
-    # Sauvegardes
     if out_pdf:
         Path(os.path.dirname(out_pdf)).mkdir(parents=True, exist_ok=True)
-        fig.savefig(out_pdf, transparent=transparent, bbox_inches="tight")
-    if out_png:
-        Path(os.path.dirname(out_png)).mkdir(parents=True, exist_ok=True)
-        fig.savefig(out_png, dpi=dpi, transparent=transparent, bbox_inches="tight")
+        fig.savefig(out_pdf, bbox_inches="tight")
+
+    return fig, axes
+
+
+
+def plot_boxplots_toy(
+    LOSS,
+    *,
+    method_names,
+    method_order=None,
+    method_renames=None,
+    lr_values=None,
+    last_k=1,
+    lrs_subset=None,
+    figsize=(18, 5),            # ← (1) plus large, moins haut
+    share_ylim_loss=True,
+    share_ylim_acc=True,
+    rotate_xticks=30,           # ← (2) rotation par défaut
+    out_pdf="images/boxplots_moons_2x2.pdf",
+    out_png="images/boxplots_moons_2x2.png",
+    dpi=300,
+    transparent=True,
+    patience=100, rel_tol=0.0, abs_tol=0.1, min_epoch=0, final_k=10,
+    yscale='linear'  # ou 'log'
+):
+    n_methods = LOSS.shape[-1]
+    colors = plt.cm.tab10(np.linspace(0, 1, max(10, n_methods)))[:n_methods]
+
+    # Constrained layout OK, mais on garde la main sur les marges
+    fig, axes = plt.subplots(1, 2, figsize=figsize, constrained_layout=False)
+
+    info00 = plot_boxplots_ax(
+        axes[0], LOSS, mood="loss",
+        lr_values=lr_values, last_k=last_k, lrs_subset=lrs_subset,
+        method_names=method_names, method_order=method_order, method_renames=method_renames,
+        rotate_xticks=rotate_xticks, colors=colors, yscale=yscale
+    )
+    axes[0].set_title("Train Loss")
+
+    plot_convergence_vs_final_boxplots_ax(
+        axes[1], LOSS,
+        method_names=method_names, method_order=method_order, method_renames=method_renames,
+        lr_values=lr_values, lrs_subset=lrs_subset,
+        patience=patience, rel_tol=rel_tol, abs_tol=abs_tol, min_epoch=min_epoch, final_k=final_k,
+        rotate_xticks=rotate_xticks, colors=colors
+    )
+    axes[1].set_title("Epochs to convergence (loss)")
+
+
+    # (2) Pivoter + aligner les labels x et micro-marges
+    for ax in axes:
+        for lab in ax.get_xticklabels():
+            lab.set_rotation(rotate_xticks)
+            lab.set_horizontalalignment('center')
+        ax.margins(x=0.02)
+        ax.grid(axis='y', linestyle=':', linewidth=0.6, alpha=0.6)  # petit plus esthétique
+        ax.spines['top'].set_visible(False)                         # désépaissir
+        ax.spines['right'].set_visible(False)
+
+    # (4) Légende commune en dessous
+    handles = info00["handles"]
+    labels  = info00["labels"]
+    fig.legend(
+        handles, labels, title="Methods",
+        ncol=min(5, len(labels)),
+        loc="upper center", bbox_to_anchor=(0.5, 0.0), frameon=False
+    )
+
+    # (3) Espace en bas pour ticks + légende
+    fig.subplots_adjust(bottom=0.1, wspace=0.2)
+
+    if out_pdf:
+        Path(os.path.dirname(out_pdf)).mkdir(parents=True, exist_ok=True)
+        fig.savefig(out_pdf, bbox_inches="tight")
+
+    return fig, axes
+
+
+# ========= Détection convergence (définition B) pour UN run =========
+def _epoch_to_convergence_vs_final(
+    y,                      # (n_epochs,)
+    *,
+    patience=100,             # nb d'epochs consécutifs requis
+    rel_tol=0.0,           # tolérance relative vs valeur finale
+    abs_tol=0.0,            # tolérance absolue additionnelle
+    min_epoch=100,            # burn-in: ignorer les premiers epochs
+    final_k=5               # moyenne sur les final_k derniers epochs pour estimer y_final
+):
+    """
+    Retourne (t_conv, y_final):
+      - t_conv: 1-based, premier epoch t tel que pour tout u∈[t, t+patience),
+                |y[u] - y_final| <= max(abs_tol, rel_tol * max(1, |y_final|)).
+                Si jamais stable -> len(y).
+      - y_final: moyenne des final_k dernières valeurs (estimation cible).
+    """
+    y = np.asarray(y, dtype=float)
+    n = y.size
+    if n == 0:
+        return 0, np.nan
+    k = int(max(1, min(final_k, n)))
+    y_final = float(np.nanmean(y[-k:]))
+    tau = max(abs_tol, rel_tol * abs(y_final))
+
+    pat = int(max(1, patience))
+    start = int(min_epoch)
+    last_start = max(0, n - pat)
+
+    for t in range(start, last_start + 1):
+        seg = y[t:t+pat]
+        if np.all(np.abs(seg - y_final) <= tau):
+            return t + 1, y_final  # 1-based
+    return n, y_final  # jamais stable avant la fin
+
+# ========= Stats regroupées (LR × méthode) =========
+def _convergence_vs_final_stats_per_group(
+    R, lr_idx_all, methods, name_to_col,
+    *,
+    patience=100, rel_tol=1e-2, abs_tol=1e-2, min_epoch=100, final_k=10,
+    intra_step=1.0, group_gap=1.3
+):
+    positions, epochs_to_conv, method_indices = [], [], []
+    finals_values, box_groups = [], []
+    M = len(methods)
+    data_ptr = 0
+
+    for i, lr_idx in enumerate(lr_idx_all):
+        group_start = i * (intra_step * M + group_gap)
+        for j, m_name in enumerate(methods):
+            if m_name not in name_to_col:
+                continue
+            m_col = name_to_col[m_name]
+
+            runs = R[lr_idx, :, :, m_col]  # (n_runs, n_epochs)
+            cur_epochs, cur_final = [], []
+            for r in range(runs.shape[0]):
+                y = runs[r]
+                t_conv, y_fin = _epoch_to_convergence_vs_final(
+                    y,
+                    patience=patience, rel_tol=rel_tol, abs_tol=abs_tol,
+                    min_epoch=min_epoch, final_k=final_k
+                )
+                cur_epochs.append(t_conv)
+                cur_final.append(y_fin)
+
+            n_new = len(cur_epochs)
+            positions.append(group_start + j * intra_step)
+            epochs_to_conv.extend(cur_epochs)
+            finals_values.extend(cur_final)
+            method_indices.extend([j] * n_new)
+            box_groups.append(slice(data_ptr, data_ptr + n_new))
+            data_ptr += n_new
+
+    return {
+        "positions": positions,
+        "epochs_to_conv": np.asarray(epochs_to_conv, dtype=float),
+        "method_indices": np.asarray(method_indices, dtype=int),
+        "finals_values": np.asarray(finals_values, dtype=float),  # y_final par run
+        "box_groups": box_groups,
+        "intra_step": intra_step,
+        "group_gap": group_gap,
+    }
+
+# ========= Tracé sur UN Axes =========
+def plot_convergence_vs_final_boxplots_ax(
+    ax,
+    results,                   # torch.Tensor/np.ndarray (n_lrs, n_runs, n_epochs, n_methods)
+    *,
+    method_names=None,    # ex: ["sgd","adam","diag_up_sgd","diag_up_adam"]
+    method_order=None,
+    method_renames=None,
+    lr_values=None,
+    lrs_subset=None, n=None,
+    patience=100, rel_tol=0.0, abs_tol=0.1, min_epoch=0, final_k=10,
+    box_width=0.65, rotate_xticks=0, fontsize=11,
+    colors=None, showfliers=True,
+    show_threshold_labels=True,      # affiche θ = y_final (médiane par boîte)
+    threshold_fmt="{:.3g}",
+):
+    # --- Normalisation ---
+    R = results.detach().cpu().numpy() if isinstance(results, torch.Tensor) else np.asarray(results)
+    if R.ndim != 4:
+        raise ValueError(f"`results` doit être (n_lrs, n_runs, n_epochs, n_methods), reçu {R.shape}")
+    n_lrs, _, _, n_methods = R.shape
+
+    if method_names is None:
+        method_names = [f"method_{i}" for i in range(n_methods)]
+    elif len(method_names) != n_methods:
+        raise ValueError("`method_names` doit avoir len == n_methods.")
+    name_to_col = {n: i for i, n in enumerate(method_names)}
+
+    if method_order is None:
+        methods = list(method_names)
+    else:
+        methods = [m for m in method_order if m in name_to_col] + [m for m in method_names if m not in (method_order or [])]
+
+    if lr_values is None:
+        lr_vals = np.arange(n_lrs, dtype=float)
+    else:
+        lr_vals = np.asarray(lr_values, dtype=float)
+        if lr_vals.shape[0] != n_lrs:
+            raise ValueError("`lr_values` longueur != n_lrs")
+
+    if lrs_subset is not None:
+        subset = np.array(list(lrs_subset))
+        if lr_values is None:
+            lr_idx_all = np.unique(subset.astype(int))
+        else:
+            idx_map = {float(v): i for i, v in enumerate(lr_vals)}
+            lr_idx_all = np.array([idx_map[float(v)] for v in subset], dtype=int)
+    elif n is not None:
+        lr_idx_all = np.argsort(lr_vals)[:int(n)]
+    else:
+        lr_idx_all = np.arange(n_lrs, dtype=int)
+
+    method_renames = method_renames or {}
+    legend_names = [method_renames.get(m, m) for m in methods]
+
+    # --- Stats de convergence vs finale ---
+    stats = _convergence_vs_final_stats_per_group(
+        R, lr_idx_all, methods, name_to_col,
+        patience=patience, rel_tol=rel_tol, abs_tol=abs_tol, min_epoch=min_epoch, final_k=final_k
+    )
+
+    # Data pour boxplot (epochs) + θ par boîte (médiane des y_final runs)
+    data_epochs, theta_medians = [], []
+    for g in stats["box_groups"]:
+        data_epochs.append(stats["epochs_to_conv"][g])
+        theta_medians.append(np.median(stats["finals_values"][g]))
+
+    # --- Tracé ---
+    bp = ax.boxplot(
+        data_epochs,
+        positions=stats["positions"],
+        widths=box_width,
+        patch_artist=True,
+        showfliers=showfliers
+    )
+    M = len(methods)
+    if colors is None:
+        colors = plt.cm.tab10(np.linspace(0, 1, max(10, M)))[:M]
+
+    for i_box, box in enumerate(bp["boxes"]):
+        m_idx = stats["method_indices"][stats["box_groups"][i_box].start]
+        box.set_facecolor(colors[m_idx]); box.set_alpha(0.85); box.set_linewidth(0.9)
+    for med in bp["medians"]: med.set_linewidth(1.6)
+    for w in bp["whiskers"]: w.set_linewidth(0.9)
+    for c in bp["caps"]: c.set_linewidth(0.9)
+    for fl in bp.get("fliers", []): fl.set_markersize(2.5); fl.set_alpha(0.6)
+
+    ax.grid(axis="y", linestyle="--", linewidth=0.6, alpha=0.4)
+    ax.set_ylabel("Epochs to convergence (vs final)", fontsize=fontsize)
+    ax.set_xlabel("Learning rate", fontsize=fontsize)
+    ax.set_yscale("log")
+
+    # Ticks de groupes LR
+    intra_step, group_gap = stats["intra_step"], stats["group_gap"]
+    n_groups = len(lr_idx_all)
+    group_centers = [i*(intra_step*M + group_gap) + intra_step*(M-1)/2 for i in range(n_groups)]
+    lr_labels = lr_vals[lr_idx_all]
+    xtick_labels = [(f"{v:.0e}" if v < 1e-2 else f"{v:.3f}".rstrip('0').rstrip('.')) for v in lr_labels]
+    ax.set_xticks(group_centers, xtick_labels)
+    if rotate_xticks:
+        plt.setp(ax.get_xticklabels(), rotation=rotate_xticks, ha="right")
+
+    # Légende méthodes
+    handles = [Line2D([0],[0], color=colors[i], linewidth=8, label=legend_names[i]) for i in range(len(legend_names))]
+    # ax.legend(handles, legend_names, title="Methods", ncol=min(4, len(legend_names)), frameon=False)
+
+    # --- Affichage θ (valeur finale cible) par boîte ---
+    if show_threshold_labels:
+        # Récupère les bornes Y actuelles
+        y0, y1 = ax.get_ylim()
+        y_span = y1 - y0
+
+        # Position du texte : en-dessous de l’axe x (plus bas que y0)
+        y_text = y0 - 0.04 * y_span   # marge plus grande
+        # ax.set_ylim(y0 - 0.20 * y_span, y1)  # <-- étend l’axe Y vers le bas pour laisser la place
+
+        # for pos, theta in zip(stats["positions"], theta_medians):
+        #     ax.annotate(
+        #         f"{theta:.3f}",
+        #         xy=(pos, y_text),
+        #         xycoords=("data", "data"),
+        #         ha="center", va="top",       # texte au-dessus du point y_text
+        #         fontsize=max(9, fontsize-2),
+        #         rotation=90,
+        #         color="dimgray"
+        #     )
+
+
+    return {"colors": colors, "legend_names": legend_names}
+
+# ========= Composite 2×2 (Balanced/Unbalanced × Loss/Acc) =========
+def plot_convergence_vs_final_boxplots_2x2(
+    LOSS_bal, ACC_bal, LOSS_unb, ACC_unb,
+    *,
+    method_names,
+    method_order=None,
+    method_renames=None,
+    lr_values=None,
+    lrs_subset=None,
+    patience=5, rel_tol=1e-2, abs_tol=1e-1, min_epoch=0, final_k=5,
+    figsize=(12, 8),
+    rotate_xticks=0,
+    share_ylim=True,
+    out_pdf="images/convergence_vs_final_2x2.pdf",
+    out_png="images/convergence_vs_final_2x2.png",
+    dpi=300, transparent=True
+):
+    n_methods = LOSS_bal.shape[-1]
+    colors = plt.cm.tab10(np.linspace(0, 1, max(10, n_methods)))[:n_methods]
+
+    fig, axes = plt.subplots(1, 1)
+
+    
+    #plt.subplots(1, 2, figsize=figsize, constrained_layout=True)
+
+    plot_convergence_vs_final_boxplots_ax(
+        axes, LOSS_bal,
+        method_names=method_names, method_order=method_order, method_renames=method_renames,
+        lr_values=lr_values, lrs_subset=lrs_subset,
+        patience=patience, rel_tol=rel_tol, abs_tol=abs_tol, min_epoch=min_epoch, final_k=final_k,
+        rotate_xticks=rotate_xticks, colors=colors
+    )
+
+    # plot_convergence_vs_final_boxplots_ax(
+    #     axes[0,1], ACC_bal,
+    #     method_names=method_names, method_order=method_order, method_renames=method_renames,
+    #     lr_values=lr_values, lrs_subset=lrs_subset,
+    #     patience=patience, rel_tol=rel_tol, abs_tol=abs_tol, min_epoch=min_epoch, final_k=final_k,
+    #     rotate_xticks=rotate_xticks, colors=colors
+    # ); axes[0,1].set_title("Balanced — Accuracy")
+
+    # plot_convergence_vs_final_boxplots_ax(
+    #     axes[1], LOSS_unb,
+    #     method_names=method_names, method_order=method_order, method_renames=method_renames,
+    #     lr_values=lr_values, lrs_subset=lrs_subset,
+    #     patience=patience, rel_tol=rel_tol, abs_tol=abs_tol, min_epoch=min_epoch, final_k=final_k,
+    #     rotate_xticks=rotate_xticks, colors=colors
+    # ); axes[1].set_title("Unbalanced — Loss")
+
+    # plot_convergence_vs_final_boxplots_ax(
+    #     axes[1,1], ACC_unb,
+    #     method_names=method_names, method_order=method_order, method_renames=method_renames,
+    #     lr_values=lr_values, lrs_subset=lrs_subset,
+    #     patience=patience, rel_tol=rel_tol, abs_tol=abs_tol, min_epoch=min_epoch, final_k=final_k,
+    #     rotate_xticks=rotate_xticks, colors=colors
+    # ); axes[1,1].set_title("Unbalanced — Accuracy")
+
+    # Légende commune
+    legend_labels = [str(method_renames.get(n, n) if method_renames else n) for n in method_names]
+    for i, name in enumerate(legend_labels):
+        if name == 1:
+            legend_labels[i] = "Baseline (no rescale)"
+        if name == "diag_up_sgd":
+            legend_labels[i] = r"Path Dyn.$\mathbf{(Ours)}$"
+        if name == "diag_up_adam":
+            legend_labels[i] = r"Path Dyn. Adam$\mathbf{(Ours)}$"
+    legend_handles = [Line2D([0],[0], color=colors[i], linewidth=8, label=legend_labels[i]) for i in range(len(legend_labels))]
+    fig.legend(legend_handles, legend_labels, title="Methods", ncol=min(4, len(legend_labels)), loc="upper center")
+
+    # Harmoniser Y si demandé
+    # if share_ylim:
+    #     ymins, ymaxs = [], []
+    #     for ax in axes.ravel():
+    #         y0, y1 = ax.get_ylim(); ymins.append(y0); ymaxs.append(y1)
+    #     common = (min(ymins), max(ymaxs))
+    #     for ax in axes.ravel():
+    #         ax.set_ylim(common)
+
+    # fig.suptitle(r"Convergence speed — within $\varepsilon$ of final ($\theta$ annoté)", fontsize=14)
+
+    # Sauvegardes
+    Path(os.path.dirname(out_pdf)).mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_pdf, transparent=transparent, bbox_inches="tight")
+    Path(os.path.dirname(out_png)).mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_png, dpi=dpi, transparent=transparent, bbox_inches="tight")
 
     return fig, axes

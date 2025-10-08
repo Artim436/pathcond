@@ -155,7 +155,6 @@ def apply_neuron_rescaling_mlp(model, layer_idx, neuron_idx, lamda) -> nn.Module
 
     return model_copy
 
-
 def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=False, reg=None) -> torch.Tensor:
     """
     Optimize per-hidden-neuron log-rescalings Z via a per-neuron quadratic, using
@@ -168,7 +167,7 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
     """
     # --- Setup: device/dtype and network structure ---
     device = next(model.parameters()).device
-    dtype = torch.float32
+    dtype = torch.double
 
     # Collect linear layers; exclude the final (output) layer from hidden count
     linear_indices = [i for i, layer in enumerate(model.model) if isinstance(layer, nn.Linear)]
@@ -233,8 +232,8 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
                     f"Non-negative c={c} in quadratic for neuron {h} at iter {k}, A_h={A_h}, B_h={B_h}, C_h={C_h}, D_h={D_h}")
 
             # Degenerate to linear if a ~ 0
-            if abs(a) < 1e-20:
-                if abs(b) >= 1e-20:
+            if abs(a) < 1e-25:
+                if abs(b) >= 1e-25:
                     x = -c / b
                     if x > 0.0:
                         z_new = torch.log(x)
@@ -242,7 +241,7 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
                         raise ValueError(
                             f"Non-positive root {x} in linear case for neuron {h} at iter {k}, a={a}, b={b}, c={c}")
                 else:
-                    if abs(c) < 1e-20:
+                    if abs(c) < 1e-25:
                         raise ValueError(f"a = {a}, b = {b}, c = {c} all ~ 0 for neuron {h} at iter {k}")
                     else:
                         raise ValueError(f"a = {a}, b = {b} both ~ 0 but c = {c} != 0 for neuron {h} at iter {k}")

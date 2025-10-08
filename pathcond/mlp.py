@@ -2,6 +2,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.utils import parameters_to_vector, vector_to_parameters
 
 
 class MNISTMLP(nn.Module):
@@ -189,3 +190,6 @@ class toy_MLP(nn.Module):
             W2 = self.model[2].weight.clone().detach()
             bias = self.model[0].bias.clone().detach() if self.model[0].bias is not None else None
         return W1, W2, bias
+
+    def get_weights_as_vector(self):
+        return parameters_to_vector(self.parameters())
