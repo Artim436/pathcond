@@ -155,7 +155,6 @@ def apply_neuron_rescaling_mlp(model, layer_idx, neuron_idx, lamda) -> nn.Module
 
     return model_copy
 
-
 def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=False, reg=None) -> torch.Tensor:
     """
     Optimize per-hidden-neuron log-rescalings Z via a per-neuron quadratic, using
@@ -211,20 +210,19 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
             Y_h = BZ - b_h * Z[h]  # shape: [m]
             y_bar = Y_h.max()
             E = torch.exp(Y_h - y_bar) * diag_G  # shape: [m]
-            E = E.to(dtype=dtype)
 
             # Polynomial coefficients components
             # A_h is scalar (int), others are sums over selected rows of E
             A_h = (card_in_h - card_out_h)
-            B_h = E[out_h_t].sum().to(dtype=dtype)
+            B_h = E[out_h_t].sum()
 
-            C_h = E[in_h_t].sum().to(dtype=dtype)
-            D_h = E[other_h_t].sum().to(dtype=dtype)
+            C_h = E[in_h_t].sum()
+            D_h = E[other_h_t].sum()
 
             # Polynomial: P(X) = a*X^2 + b*X + c where
-            a = (B_h * (A_h + n_params_tensor)).to(dtype=dtype)
-            b = (D_h * A_h).to(dtype=dtype)
-            c = (C_h * (A_h - n_params_tensor)).to(dtype=dtype)
+            a = B_h * (A_h + n_params_tensor)
+            b = D_h * A_h
+            c = C_h * (A_h - n_params_tensor)
 
             if a <= 0.0:
                 raise ValueError(
@@ -306,7 +304,7 @@ def optimize_rescaling_gd(model,
             return n*torch.logsumexp(torch.log(g) + Bz, 0) - Bz.sum()
         else:
             v = g*torch.exp(Bz)
-            return n*torch.log(v.sum()) - Bz.sum()
+            return n*torch.log(v.sum())
 
     device = next(model.parameters()).device
     dtype = torch.float32

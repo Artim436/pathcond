@@ -56,6 +56,8 @@ def apply_init(model: nn.Module, scheme: str, gain: float = None) -> None:
                 nn.init.kaiming_normal_(m.weight, nonlinearity="relu")
             elif scheme == "uniform":
                 nn.init.uniform_(m.weight, a=-0.05, b=0.05)
+            elif scheme == "uniform_wide":
+                nn.init.uniform_(m.weight, a=-0.5, b=0.5)
             elif scheme == "normal":
                 nn.init.normal_(m.weight, mean=0.0, std=0.02)
             elif scheme == "default":
@@ -172,7 +174,7 @@ def plot_boxplot(
     plt.figure(figsize=(12, 6))
 
     # Palette
-    palette = sns.color_palette("viridis", df["arch_str"].nunique())
+    palette = sns.color_palette(palette=None, n_colors=df["arch_str"].nunique())
 
     # Renommage des initialisations si nécessaire
     if init_name_map is not None:
@@ -235,7 +237,6 @@ def plot_boxplot(
 
     # Sauvegarde (PDF vectoriel haute qualité)
     plt.savefig(save_path, bbox_inches="tight", dpi=300, transparent=True)
-    plt.show()
 
 
 
@@ -243,9 +244,11 @@ def plot_boxplot(
 
 if __name__ == "__main__":
     architectures = [
-        [2, 1000, 1000, 1000, 2],
-        [1000, 8, 8, 8, 10],
+        [2, 128, 128, 128, 2],
+        [2, 128, 64, 128, 64, 128, 2],
+        [2, 256, 128, 64, 32, 2],
     ]
+
     inits = [
         "xavier_uniform",
         "xavier_normal",
@@ -253,11 +256,12 @@ if __name__ == "__main__":
         "kaiming_normal",
         "orthogonal",
         "uniform",
+        "uniform_wide",
         "normal",
         "ones"
     ]
 
-    n_runs = 3
+    n_runs = 10
     all_results = []
 
     for i in range(n_runs):
@@ -271,6 +275,9 @@ if __name__ == "__main__":
     df = pd.DataFrame(all_results)
     df["arch_str"] = df["architecture"].apply(lambda a: "-".join(map(str, a)))
     df["F_output"] = df["F_output"].apply(lambda x: x.item() if isinstance(x, torch.Tensor) else x)
+
+    #save the results
+    df.to_csv("init_comparison_results.csv", index=False)
 
     # Moyenne et variance
     stats = df.groupby(["arch_str", "init"])["F_output"].agg(["mean", "std"]).reset_index()

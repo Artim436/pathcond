@@ -27,7 +27,8 @@ setup(
             "mnist-plot-curves = cli_plot:main",
             "moons-multi-lr = pathcond.cli_train_multi_lr_moons:main",
             "moons-boxplots = pathcond.cli_boxplots_moons:main",
-
+            "ts-multi-lr = pathcond.cli_train_multi_lr_teacher_student:main",
+            "ts-boxplots = pathcond.cli_boxplots_teacher_student:main",
         ],
     },
 )
