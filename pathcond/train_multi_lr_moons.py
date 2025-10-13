@@ -7,6 +7,7 @@ from pathcond.rescaling_polyn import optimize_neuron_rescaling_polynomial, rewei
 from pathcond.plot import plot_rescaling_analysis
 from sklearn.datasets import make_moons
 from sklearn.model_selection import train_test_split
+from tqdm import tqdm
 
 
 import time
@@ -55,7 +56,7 @@ def fit_with_telportation(
         X, y, test_size=0.3, random_state=42
     )
 
-    for lr_index, lr in enumerate(learning_rates):
+    for lr_index, lr in tqdm(enumerate(learning_rates)):
         for it in range(nb_iter):
 
             start = time.time()
@@ -66,6 +67,7 @@ def fit_with_telportation(
             def make_model(seed: int = 0, device=None):
                 if balanced:
                     model = Moons_MLP(hidden[0], hidden[1], seed=seed)
+                    model.init__weights_normal(mean=0.0, std=0.02, seed=seed)
                     return model.to(device) if device is not None else model
                 else:
                     model = Moons_MLP_unbalanced(hidden[0], hidden[1], seed=seed)
@@ -128,7 +130,7 @@ def fit_with_telportation(
                         variants["sgd"]["model"], verbose=False, soft=True, name="sgd", nb_iter=nb_iter_optim_rescaling, device=device, data=data
                     )
                     end_teleport = time.time()
-                    print(f"Rescaling applied in {end_teleport - start_teleport:.2f} seconds.")
+                    # print(f"Rescaling applied in {end_teleport - start_teleport:.2f} seconds.")
                     variants["sgd"]["optimizer"] = torch.optim.SGD(
                         variants["sgd"]["model"].parameters(), lr=lr
                     )
@@ -163,7 +165,7 @@ def fit_with_telportation(
                         v["hist_acc"].append(accuracy)
 
             end = time.time()
-            print(f"Training completed in {end - start:.2f} seconds.")
+            # print(f"Training completed in {end - start:.2f} seconds. (lr={lr:.4f}, iter={it})")
 
             # --- restitue EXACTEMENT les mêmes éléments et dans le même ordre
             loss_history = variants["sgd"]["hist_loss"]
@@ -205,8 +207,7 @@ def rescaling_path_dynamics(model, verbose: bool = False, soft: bool = True, nb_
     if verbose:
         print(f"   Modèle créé avec {sum(p.numel() for p in model.parameters())} paramètres")
         # print(f"   Architecture: {model}")
-    else:
-        print(f"✅ Modèle initialisé ({sum(p.numel() for p in model.parameters())} paramètres)")
+
 
     # 3. Optimisation séquentielle
     if verbose:
@@ -220,15 +221,15 @@ def rescaling_path_dynamics(model, verbose: bool = False, soft: bool = True, nb_
         plot_rescaling_analysis(final_model=final_model, lambdas_history=lambdas_history, norms_history=OBJ_hist, nb_iter_optim=nb_iter, name=name)
     else:
         BZ_opt = optimize_neuron_rescaling_polynomial(model=model, n_iter=nb_iter, verbose=verbose, tol=1e-6)
-    final_model = reweight_model(model, BZ_opt)
+    final_model = reweight_model(model, BZ_opt).to(dtype=torch.float32, device=device)
 
 
     # 4. Vérification de la sortie finale
     if verbose:
         print("\n4. Vérification de la préservation de la sortie finale...")
     final_output = final_model.forward(inputs, device=device)
-    torch.allclose(original_output, final_output, atol=1e-5)
-    print("✅ Sortie finale préservée après rescaling.")
+    assert torch.allclose(original_output, final_output, atol=1e-5)
+    # print("✅ Sortie finale préservée après rescaling.")
 
     return final_model
 

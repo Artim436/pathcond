@@ -744,7 +744,7 @@ def plot_boxplots_ax(
 # 2) Composite 2×2 : balanced/unbalanced × loss/accuracy
 # ---------------------------------------------
 def plot_boxplots_2x2(
-    LOSS_bal, ACC_bal, LOSS_unb, ACC_unb,
+    LOSS_bal, ACC_bal,
     *,
     method_names,
     method_order=None,

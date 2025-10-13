@@ -181,7 +181,7 @@ def rescaling_path_dynamics(model, verbose: bool = False, soft: bool = True, nb_
     if verbose:
         print("\n4. Vérification de la préservation de la sortie finale...")
     final_output = final_model.forward(inputs, device=device)
-    torch.allclose(original_output, final_output, atol=1e-5)
+    assert torch.allclose(original_output, final_output, atol=1e-5)
     # print("✅ Sortie finale préservée après rescaling.")
 
     return final_model
@@ -189,7 +189,9 @@ def rescaling_path_dynamics(model, verbose: bool = False, soft: bool = True, nb_
 def rescaling_extreme(model, device="cpu") -> MNISTMLP:
     """Test de validation de la fonctionnalité de rescaling par neurone."""
 
-    rescale_factor = 0.01
+    inputs = torch.randn(3, 1).to(device)
+    original_output = model.forward(inputs, device=device)
+    rescale_factor = 1
     # x = torch.max(torch.abs(model.model[2].weight.data[0,:]))/rescale_factor
     # x = torch.abs(model.model[2].weight.data[0,0])/rescale_factor
     x = torch.median(torch.abs(model.model[2].weight.data[0,:]))/rescale_factor
@@ -204,11 +206,17 @@ def rescaling_extreme(model, device="cpu") -> MNISTMLP:
     # print("v squared", model.model[2].weight.data**2)
     alpha = model.model[2].weight.data[0,0]**2
      #print("alpha", alpha)
+    final_output = model.forward(inputs, device=device)
+    assert torch.allclose(original_output, final_output, atol=1e-5)
+    # print("✅ Sortie finale préservée après rescaling.")
     return model, alpha
 
 
 def equinorm_rescaling(model, device="cpu") -> MNISTMLP:
     # print("norm of weights before", torch.norm(model.get_weights_as_vector()))
+    inputs = torch.randn(3, 1).to(device)
+    original_output = model.forward(inputs, device=device)
+     #print("weights squared", model.model[2].weight.data**2)
     num = model.model[2].weight.data.pow(2)
     den = model.model[0].weight.data.view(-1).pow(2) + model.model[0].bias.data.view(-1).pow(2)
     res = (num/den).pow(0.25)
@@ -217,4 +225,6 @@ def equinorm_rescaling(model, device="cpu") -> MNISTMLP:
     model.model[2].weight.data *= 1 / rescale.view(model.model[2].weight.shape)
     model.model[0].bias.data *= rescale.view(model.model[0].bias.shape)
     # print("norm of weights after", torch.norm(model.get_weights_as_vector()))
+    final_output = model.forward(inputs, device=device)
+    assert torch.allclose(original_output, final_output, atol=1e-5)
     return model

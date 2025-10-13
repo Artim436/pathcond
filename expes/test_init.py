@@ -289,6 +289,7 @@ if __name__ == "__main__":
     "kaiming_normal": "Kaiming N.",
     "orthogonal": "Orthogonal",
     "uniform": "Uniform",
+    "uniform_wide": "Uniform Wide",
     "normal": "Normal",
     "ones": "Ones",
     "twos": "Twos",

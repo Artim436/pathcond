@@ -13,7 +13,7 @@ from torch.nn.utils import parameters_to_vector, vector_to_parameters
 import time
 
 # %%
-X, y = make_moons(n_samples=1000, noise=0.1, random_state=42)
+X, y = make_moons(n_samples=1000, noise=0.2, random_state=42)
 X = torch.tensor(X, dtype=torch.float)
 y = torch.tensor(y, dtype=torch.long)
 
@@ -29,11 +29,9 @@ class SimpleNN(nn.Module):
     def __init__(self):
         super().__init__()
         self.model = nn.Sequential(
-            nn.Linear(2, 16),
+            nn.Linear(2, 4),
             nn.ReLU(),
-            nn.Linear(16, 8),
-            nn.ReLU(),
-            nn.Linear(8, 2),
+            nn.Linear(4, 2, bias=False),
             # nn.ReLU(),
             # nn.Linear(10, 15),
             # nn.ReLU(),
@@ -54,20 +52,29 @@ B = compute_matrix_B(model).to(torch.float)
 B.T @ torch.ones(B.shape[0])
 # %%
 nb_iter = 10
-lr = 0.01
+lr = 0.1
 epochs = 1500
 rescale_every = 200
 torch.manual_seed(50)
 
 model_simple = SimpleNN()
-# for m in model_simple.modules():
-#     if isinstance(m, nn.Linear):
-#         nn.init.normal_(m.weight, mean=0.0, std=0.02)
+for m in model_simple.modules():
+    if isinstance(m, nn.Linear):
+        nn.init.normal_(m.weight, mean=0.0, std=0.02)
 
-BZ_opt = optimize_neuron_rescaling_polynomial(
-    model=model_simple, n_iter=nb_iter, verbose=False, tol=1e-6).to(torch.float)
+BZ_opt, Z_opt, alpha, OBJ = optimize_neuron_rescaling_polynomial(
+    model=model_simple, n_iter=nb_iter, verbose=True, tol=1e-6)
+
+BZ_opt = BZ_opt.to(torch.float)
+
+print("BZ shape: ", BZ_opt.shape)
+
+print("alpha: ", alpha)
+
 
 model_rescaled = reweight_model(model_simple, BZ_opt)
+
+
 model_teleport_first = copy.deepcopy(model_simple)
 model_teleport_second = copy.deepcopy(model_simple)
 

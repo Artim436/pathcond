@@ -78,6 +78,14 @@ class Moons_MLP(nn.Module):
                 x = layer(x)
         return x
     
+    def init_weights_normal(self, mean=0.0, std=0.02, seed=0):
+        torch.manual_seed(seed)
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, mean=mean, std=std)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0.0)
+    
 class Moons_MLP_unbalanced(nn.Module):
     """MLP for two moons (2 -> 32 -> 32 -> 1)."""
     def __init__(self, d_hidden1: int = 32, d_hidden2: int = 32, seed: int = 0):

@@ -13,7 +13,7 @@ pip install -e .'[dev']
 ```bash
 mnist-train --h1 10 --h2 10 --epochs 10 --teleport-epoch 0  --nb-iter-optim-rescaling 1 --nb-iter 5
 moons-multi-lr --epochs 100000 --frac 1 --nb-lr 10  --teleport-epoch 0 --nb-iter-optim-rescaling 50 --nb-iter 5
-ts-multi-lr --epochs 10000 --frac 1 --nb-lr 10  --teleport-epoch 0 --nb-iter-optim-rescaling 50 --nb-iter 10
+ts-multi-lr --epochs 100 --frac 1 --nb-lr 10  --teleport-epoch 0 --nb-iter-optim-rescaling 50 --nb-iter 10
 ```
 
 
