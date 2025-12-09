@@ -170,6 +170,7 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
     # --- Setup: device/dtype and network structure ---
     device = next(model.parameters()).device
     dtype = torch.double
+    dtype = torch.double
 
     # Collect linear layers; exclude the final (output) layer from hidden count
     linear_indices = [i for i, layer in enumerate(model.model) if isinstance(layer, nn.Linear)]
@@ -308,6 +309,7 @@ def optimize_rescaling_gd(model,
             return n*torch.logsumexp(torch.log(g) + Bz, 0) - Bz.sum()
         else:
             v = g*torch.exp(Bz)
+            return n*torch.log(v.sum()) - Bz.sum()
             return n*torch.log(v.sum()) - Bz.sum()
 
     device = next(model.parameters()).device

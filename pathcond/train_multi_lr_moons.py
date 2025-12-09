@@ -243,6 +243,7 @@ def rescaling_path_dynamics(model, verbose: bool = False, soft: bool = True, nb_
         # print(f"   Architecture: {model}")
 
 
+
     # 3. Optimisation séquentielle
     if verbose:
         print("\n1. Optimisation séquentielle neurone par neurone...")

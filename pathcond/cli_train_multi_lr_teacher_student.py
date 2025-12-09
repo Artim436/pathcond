@@ -9,15 +9,25 @@ import torch
 def main():
     p = argparse.ArgumentParser(description="Boxplot Moons MLP")
     p.add_argument("--epochs", type=int, default=5)
+<<<<<<< HEAD
     p.add_argument("--nb-init", type=int, default=10, help="Numnber of inits")
+=======
+    p.add_argument("--nb-lr", type=int, default=10, help="Numnber of learning rates")
+>>>>>>> 3a474d523143713e08b0ccde1da67b383ab8e54e
     p.add_argument("--frac", type=float, default=0.01, help="Fraction of the dataset to use for training")
     p.add_argument("--teleport-epoch", type=int, default=0, help="Epoch to apply path rescaling")
     p.add_argument("--nb-iter-optim-rescaling", type=int, default=100, help="Number of iterations for the path rescaling optimization")
     p.add_argument("--nb-iter", type=int, default=1, help="Number of repetitions of the whole experiment (for statistics)")
     args = p.parse_args()
+<<<<<<< HEAD
     LOSS, GRAD = fit_with_telportation(
         epochs=args.epochs,
         nb_init=args.nb_init,
+=======
+    LOSS = fit_with_telportation(
+        epochs=args.epochs,
+        nb_lr=args.nb_lr,
+>>>>>>> 3a474d523143713e08b0ccde1da67b383ab8e54e
         frac=args.frac,
         hidden=128,
         ep_teleport=args.teleport_epoch,
@@ -26,7 +36,10 @@ def main():
     )
     torch.save(LOSS, _ensure_outdir("results/") / "multi_lr_ts_loss.pt")
 
+<<<<<<< HEAD
     torch.save(GRAD, _ensure_outdir("results/") / "multi_lr_ts_grad.pt")
 
+=======
+>>>>>>> 3a474d523143713e08b0ccde1da67b383ab8e54e
     plot_boxplots_toy()
     
