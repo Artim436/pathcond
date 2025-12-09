@@ -4,7 +4,6 @@ from pathcond.plot import plot_mean_var_curves, plot_boxplots, plot_boxplots_2x2
 from pathlib import Path
 from pathcond.utils import _ensure_outdir
 import torch
-<<<<<<< HEAD
 from pathcond.plot import plot_mean_var_curves_triptych, plot_mean_var_curves_triptych_init
 import numpy as np
 import matplotlib.pyplot as plt
@@ -102,12 +101,6 @@ def plot_boxplot_results(results):
     plt.suptitle("Comparaison de la Similarité et de la Distance des Gradients par Initialisation", fontsize=16, y=1.02)
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     plt.savefig(_ensure_outdir("images/") / "gradient_trajectory_analysis.pdf")
-=======
-from pathcond.plot import plot_boxplots_toy
-
-
-# 
->>>>>>> 3a474d523143713e08b0ccde1da67b383ab8e54e
 
 def main():
     resdir = Path("results")
@@ -115,7 +108,6 @@ def main():
     imgdir = Path("images"); imgdir.mkdir(parents=True, exist_ok=True)
 
     LOSS = torch.load(resdir / "multi_lr_ts_loss.pt")
-<<<<<<< HEAD
 
     GRAD_init = torch.load(resdir / "multi_lr_ts_grad.pt")
     
@@ -142,27 +134,3 @@ def main():
     results = analyze_gradient_similarity_raw(GRAD_init)
     plot_boxplot_results(results)
 
-=======
-    
-    nb_lr = LOSS.shape[0]
-    learning_rates = torch.logspace(-4, -1, nb_lr).numpy()
-
-    method_names = ["pathcond", "baseline", "equinorm", "extreme"]
-
-    plot_boxplots_toy(
-        LOSS,
-        method_names=method_names,
-        method_order=None,             # ou liste explicite
-        lr_values=learning_rates,
-        last_k=5,
-        lrs_subset=None,               # ou ex: [1e-4, 1e-3, 1e-2]
-        figsize=(18, 5),
-        rotate_xticks=0,
-        out_pdf=str(images / "boxplots_ts.pdf"),
-        out_png=str(images / "boxplots_ts.png"),
-        dpi=300,
-        patience=100, rel_tol=0, abs_tol=1e-4, min_epoch=100,
-        yscale='log',
-    )
-    print("Figure enregistrée dans images/boxplots_ts.{pdf,png}")
->>>>>>> 3a474d523143713e08b0ccde1da67b383ab8e54e
