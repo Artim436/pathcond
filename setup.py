@@ -5,7 +5,7 @@ setup(
     version="0.1.0",
     description="Minimal MLP (ReLU) for MNIST",
     author="Arthur Lebeurrier",
-    python_requires=">=3.9",
+    python_requires=">=3.11",
     packages=find_packages(),
     install_requires=[
         "torch>=2.1",
@@ -22,13 +22,16 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            "mnist-train = cli:main",
+            "mnist-train = pathcond.cli:main",
             "compare-g-diag-g = plot_diag_vs_full:main",
-            "mnist-plot-curves = cli_plot:main",
+            "mnist-plot-curves = pathcond.cli_plot:main",
             "moons-multi-lr = pathcond.cli_train_multi_lr_moons:main",
             "moons-boxplots = pathcond.cli_boxplots_moons:main",
             "ts-multi-lr = pathcond.cli_train_multi_lr_teacher_student:main",
             "ts-boxplots = pathcond.cli_boxplots_teacher_student:main",
+            "resnet-mnist-train = pathcond.cli_resnet:main",
+            "resnet-mnist-plot-curves = pathcond.cli_plot_resnet:main",
+            "plot-mnist-resnet = pathcond.cli_plot_resnet:main",
         ],
     },
 )

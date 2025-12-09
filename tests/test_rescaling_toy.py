@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import pytest
 
-from pathcond.mlp import toy_MLP
+from pathcond.models import toy_MLP
 from pathcond.rescaling_polyn import (
     apply_neuron_rescaling_mlp,
     compute_G_matrix,

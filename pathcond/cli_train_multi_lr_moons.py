@@ -15,31 +15,24 @@ def main():
     p.add_argument("--nb-iter-optim-rescaling", type=int, default=100, help="Number of iterations for the path rescaling optimization")
     p.add_argument("--nb-iter", type=int, default=1, help="Number of repetitions of the whole experiment (for statistics)")
     args = p.parse_args()
-    LOSS, ACC = fit_with_telportation(
+    TIME, EPOCHS = fit_with_telportation(
         epochs=args.epochs,
         nb_lr=args.nb_lr,
         frac=args.frac,
-        hidden=(10, 10),
+        hidden=(32, 32),
         ep_teleport=args.teleport_epoch,
         nb_iter_optim_rescaling=args.nb_iter_optim_rescaling,
         nb_iter=args.nb_iter,
         data="moons",
         balanced=True,
     )
-    torch.save(LOSS, _ensure_outdir("results/") / "multi_lr_moons_loss.pt")
-    torch.save(ACC, _ensure_outdir("results/") / "multi_lr_moons_acc.pt")
-    LOSS, ACC = fit_with_telportation(
-        epochs=args.epochs,
-        nb_lr=args.nb_lr,
-        frac=args.frac,
-        hidden=(10, 5),
-        ep_teleport=args.teleport_epoch,
-        nb_iter_optim_rescaling=args.nb_iter_optim_rescaling,
-        nb_iter=args.nb_iter,
-        data="moons",
-        balanced=False,
-    )
-    torch.save(LOSS, _ensure_outdir("results/") / "multi_lr_moons_loss_unbalanced.pt")
-    torch.save(ACC, _ensure_outdir("results/") / "multi_lr_moons_acc_unbalanced.pt")
-    
-    plot_boxplots_moons()
+    # torch.save(LOSS, _ensure_outdir("results/") / "multi_lr_moons_loss.pt")
+    # torch.save(ACC_TRAIN, _ensure_outdir("results/") / "multi_lr_moons_acc_train.pt")
+    # torch.save(ACC_TEST, _ensure_outdir("results/") / "multi_lr_moons_acc_test.pt")
+    torch.save(TIME, _ensure_outdir("results/") / "multi_lr_moons_time.pt")
+    torch.save(EPOCHS, _ensure_outdir("results/") / "multi_lr_moons_epochs.pt")
+    # torch.save(GRAD, _ensure_outdir("results/first_fig/") / "multi_lr_moons_grad.pt")
+    # torch.save(DIAG_G, _ensure_outdir("results/first_fig/") / "multi_lr_moons_diag_g.pt")
+
+
+    plot_boxplots_moons()  # Pass learning_rates to the plotting function

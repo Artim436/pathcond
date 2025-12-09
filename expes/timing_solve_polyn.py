@@ -3,6 +3,8 @@ import time
 import torch
 from pathcond.rescaling_polyn import compute_in_out_other_h
 import matplotlib.pyplot as plt
+from pathcond.rescaling_polyn import compute_matrix_B, compute_diag_G
+from pathcond.models import MLP
 # %%
 
 
@@ -152,7 +154,7 @@ def update_z_polynomial(z, g, B):
 def update_z_polynomial_jit(z, g, B):
     # Do one pass on every z_h
     # Maintain BZ incrementally: BZ = B @ Z
-    BZ = B @ z
+    BZ = torch.zeros(B.shape[0], dtype=z.dtype, device=z.device)
 
     n_params_tensor = B.shape[0]
     H = B.shape[1]
@@ -200,6 +202,7 @@ def update_z_polynomial_jit(z, g, B):
     return z
 
 
+
 # %%
 n = 512
 H = 256
@@ -212,7 +215,6 @@ z = torch.randn(H)
 z_new = update_z_polynomial(z, g, B)
 z_new_jit = update_z_polynomial_jit(z, g, B)
 # %%
-print(z_new_jit-z_new)
 # %%
 all_H = [2**k for k in range(1, 13)]  # number of hidden neurons
 all_n = [2**k for k in range(1, 13)]  # number of parameters
@@ -282,4 +284,5 @@ for k, i in enumerate([10, 11]):
     ax[k].set_title('\n # params $n$ = {}'.format(n), fontsize=fs+2)
 plt.suptitle('Timing one pass $z$', fontsize=fs+2)
 plt.tight_layout()
+plt.savefig('timing_solve_polyn_jit_vs_nojit.pdf')
 # %%

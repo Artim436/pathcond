@@ -11,9 +11,10 @@ pip install -e .'[dev']
 ## Train
 
 ```bash
-mnist-train --h1 10 --h2 10 --epochs 10 --teleport-epoch 0  --nb-iter-optim-rescaling 1 --nb-iter 5
-moons-multi-lr --epochs 100000 --frac 1 --nb-lr 10  --teleport-epoch 0 --nb-iter-optim-rescaling 50 --nb-iter 5
-ts-multi-lr --epochs 10000 --frac 1 --nb-lr 10  --teleport-epoch 0 --nb-iter-optim-rescaling 50 --nb-iter 10
+mnist-train --epochs 10 --h1 512 --h2 512 --nb-lr 1 --teleport-epoch 0  --nb-iter-optim-rescaling 15 --nb-iter 1 --frac 1
+moons-multi-lr --epochs 1000 --frac 1 --nb-lr 10  --teleport-epoch 0 --nb-iter-optim-rescaling 15 --nb-iter 3
+ts-multi-lr --epochs 1000 --frac 1 --nb-init 5  --teleport-epoch 0 --nb-iter-optim-rescaling 15 --nb-iter 1
+resnet-mnist-train --epochs 10 --nb-lr 10 --teleport-epoch 0 --nb-iter-optim-rescaling 1 --nb-iter 1 --frac 1
 ```
 
 
@@ -23,6 +24,7 @@ ts-multi-lr --epochs 10000 --frac 1 --nb-lr 10  --teleport-epoch 0 --nb-iter-opt
 mnist-plot-curves
 moons-boxplots
 ts-boxplots
+plot-mnist-resnet
 ```
 
 ## Compare G vs diag(G)

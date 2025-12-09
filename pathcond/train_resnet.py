@@ -2,11 +2,11 @@ from __future__ import annotations
 from typing import Tuple, List
 import torch
 import torch.nn as nn
-from pathcond.models import MNISTMLP
-from pathcond.data import mnist_loaders
-from pathcond.rescaling_polyn import optimize_neuron_rescaling_polynomial, reweight_model
+from pathcond.data import mnist_loaders, cifar10_loaders
+from pathcond.rescaling_polyn_resnet import optimize_neuron_rescaling_polynomial_jitted_resnet, reweight_model_resnet, optimize_neuron_rescaling_polynomial_jitted_resnet_iter
 from pathcond.plot import plot_rescaling_analysis
 from tqdm import tqdm
+from pathcond.models import resnet18_mnist, resnet18_cifar10
 
 import time
 
@@ -64,7 +64,6 @@ def evaluate(model, loader, device) -> float:
 
 def fit_with_telportation(  
     epochs: int = 5,
-    hidden=(2, 2),
     ep_teleport: int = 0,
     nb_lr: int = 10,
     nb_iter_optim_rescaling: int = 1,
@@ -87,7 +86,7 @@ def fit_with_telportation(
       loss_adam, loss_ref_adam, acc_adam, acc_ref_adam
     """
     adam = False
-    learning_rates = torch.logspace(-1, -1, nb_lr)
+    learning_rates = torch.logspace(-4, -1, nb_lr)
     ACC_TRAIN = torch.zeros((nb_lr, nb_iter, epochs, 2))  # sgd, ref_sgd
     LOSS = torch.zeros((nb_lr, nb_iter, epochs, 2))
     ACC_TEST = torch.zeros((nb_lr, nb_iter, epochs, 2))
@@ -100,12 +99,14 @@ def fit_with_telportation(
         for it in range(nb_iter):
 
             torch.manual_seed(it)
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            device = torch.device( "cuda" if torch.cuda.is_available() else "cpu" )
 
             # --- construction des variantes de modèles/optimiseurs de façon déclarative
             def make_model(seed: int = 0, device=None):
-                model = MNISTMLP(d_hidden1=hidden[0], d_hidden2=hidden[1], seed=seed).to(device)
-                # model.init_normal(mean=0.0, std=0.02, seed=seed)
+                if data == "mnist":
+                    model = resnet18_mnist(num_classes=10, seed=seed).to(device)
+                else:  # cifar10
+                    model = resnet18_cifar10(num_classes=10, seed=seed).to(device)
                 return model
             
             criterion = nn.CrossEntropyLoss()
@@ -137,7 +138,11 @@ def fit_with_telportation(
 
 
             ep_teleport = [ep_teleport] if isinstance(ep_teleport, int) else ep_teleport
-            train_dl, test_dl = mnist_loaders(batch_size=128)
+            if data == "mnist":
+                train_dl, test_dl = mnist_loaders(batch_size=128)
+            else:  # cifar10
+                train_dl, test_dl = cifar10_loaders(batch_size=128)
+
             # --- boucle d'entraînement
             for ep in range(epochs):
                 # évaluation
@@ -187,40 +192,23 @@ def fit_with_telportation(
 
 
 
-def rescaling_path_dynamics(model, verbose: bool = False, soft: bool = True, nb_iter=1, name: str = "sgd", device="cpu", data="mnist") -> MNISTMLP:
+def rescaling_path_dynamics(model, verbose: bool = False, soft: bool = True, nb_iter=1, name: str = "sgd", device="cpu", data="mnist"):
     """Test de validation de la fonctionnalité de rescaling par neurone."""
 
+
     if data == "mnist":
-        inputs = torch.randn(3, 1, 28, 28).to(device)
-    elif data == "moons":
-        inputs = torch.randn(3, 2).to(device)
-    model = model.to(device)
-    original_output = model(inputs)
-    if verbose:
-        print(f"   Modèle créé avec {sum(p.numel() for p in model.parameters())} paramètres")
-        # print(f"   Architecture: {model}")
-
-
-    # 3. Optimisation séquentielle
-    if verbose:
-        print("\n1. Optimisation séquentielle neurone par neurone...")
-        print("-" * 50)
-
-    if verbose:
-        BZ_opt, Z_opt, alpha, OBJ_hist = optimize_neuron_rescaling_polynomial(model=model, n_iter=nb_iter, verbose=verbose, tol=1e-6)
-        lambdas_history = torch.exp(-(Z_opt.clone().detach())/2).cpu().numpy()
-        OBJ_hist = torch.tensor(OBJ_hist).to("cpu")
-        plot_rescaling_analysis(final_model=final_model, lambdas_history=lambdas_history, norms_history=OBJ_hist, nb_iter_optim=nb_iter, name=name)
+        inputs = torch.randn(16, 1, 28, 28).to(device)
     else:
-        BZ_opt = optimize_neuron_rescaling_polynomial(model=model, n_iter=nb_iter, verbose=verbose, tol=1e-6)
-    final_model = reweight_model(model, BZ_opt).to(dtype=torch.float32, device=device)
+        inputs = torch.randn(16, 3, 32, 32).to(device)
+    BZ_opt, Z_opt = optimize_neuron_rescaling_polynomial_jitted_resnet_iter(model=model, n_iter=nb_iter, tol=1e-6)
+    final_model = reweight_model_resnet(model, BZ_opt, Z_opt).to(dtype=torch.float32, device=device)
 
 
-    # 4. Vérification de la sortie finale
-    if verbose:
-        print("\n4. Vérification de la préservation de la sortie finale...")
-    final_model = final_model.to(device)
+
+    final_model = final_model.to(device).eval()
+    model.eval()
     final_output = final_model(inputs)
+    original_output = model(inputs)
     torch.allclose(original_output, final_output, atol=1e-5)
     # print("✅ Sortie finale préservée après rescaling.")
 

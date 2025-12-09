@@ -4,7 +4,7 @@ import torch.nn as nn
 import pytest
 import math
 
-from pathcond.mlp import MNISTMLP
+from pathcond.models import MNISTMLP
 from pathcond.rescaling_polyn import (
     apply_neuron_rescaling_mlp,
     compute_G_matrix,

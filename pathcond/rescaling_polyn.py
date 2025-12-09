@@ -5,13 +5,15 @@ from tqdm import tqdm
 import math
 from pathcond.utils import _param_start_offsets
 from torch.nn.utils import parameters_to_vector, vector_to_parameters
+from pathcond.utils import split_sorted_by_column
 
 
 def grad_path_norm(model, device="cpu") -> torch.Tensor:
     inputs = torch.ones(1, 1, model.model[0].in_features)  # Dummy input for G computation
-
+    inputs = inputs.to(device)
     def fct(model, inputs, device="cpu"):
-        return model.forward(inputs, device=device).sum()
+        model = model.to(device)
+        return model(inputs).sum().to(device)
     grad = torch.autograd.grad(fct(model, inputs, device=device), model.parameters())
     grad = [g.view(-1) for g in grad]  # Aplatir les gradients
     return torch.cat(grad)  # Concaténer les gradients en un seul tenseur
@@ -232,8 +234,8 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
                     f"Non-negative c={c} in quadratic for neuron {h} at iter {k}, A_h={A_h}, B_h={B_h}, C_h={C_h}, D_h={D_h}")
 
             # Degenerate to linear if a ~ 0
-            if abs(a) < 1e-25:
-                if abs(b) >= 1e-25:
+            if abs(a) < 1e-30:
+                if abs(b) >= 1e-30:
                     x = -c / b
                     if x > 0.0:
                         z_new = torch.log(x)
@@ -241,7 +243,7 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
                         raise ValueError(
                             f"Non-positive root {x} in linear case for neuron {h} at iter {k}, a={a}, b={b}, c={c}")
                 else:
-                    if abs(c) < 1e-25:
+                    if abs(c) < 1e-30:
                         raise ValueError(f"a = {a}, b = {b}, c = {c} all ~ 0 for neuron {h} at iter {k}")
                     else:
                         raise ValueError(f"a = {a}, b = {b} both ~ 0 but c = {c} != 0 for neuron {h} at iter {k}")
@@ -272,7 +274,7 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
                     obj = function_F(n_params, BZ, diag_G).item()
                     OBJ.append(obj)
         if delta_total < tol:
-            print(f"Converged after {k+1} iterations (delta_total={delta_total:.6e} < tol={tol})")
+            # print(f"Converged after {k+1} iterations (delta_total={delta_total:.6e} < tol={tol})")
             break
     alpha = n_params/torch.sum(torch.exp(BZ) * diag_G).item()
     obj = function_F(n_params, BZ, diag_G).item()
@@ -280,6 +282,8 @@ def optimize_neuron_rescaling_polynomial(model, n_iter=10, tol=1e-6, verbose=Fal
     if verbose:
         return BZ, Z, alpha, OBJ
     return BZ
+
+
 
 
 def optimize_rescaling_gd(model,
@@ -304,7 +308,7 @@ def optimize_rescaling_gd(model,
             return n*torch.logsumexp(torch.log(g) + Bz, 0) - Bz.sum()
         else:
             v = g*torch.exp(Bz)
-            return n*torch.log(v.sum())
+            return n*torch.log(v.sum()) - Bz.sum()
 
     device = next(model.parameters()).device
     dtype = torch.float32
@@ -512,40 +516,6 @@ def reweight_model(model: nn.Module, BZ: torch.Tensor) -> nn.Module:
     return new_model
 
 
-# def forward_with_rescaled(model: nn.Module, x: torch.Tensor, scaling: torch.Tensor):
-#     """
-#     Forward pass with rescaled model parameters.
-#     Gradients flow w.r.t model parameters; scaling is constant.
-
-#     Args:
-#         model (nn.Module): PyTorch model
-#         x (torch.Tensor): input
-#         scaling (torch.Tensor): scaling vector of size [n_params]
-
-#     Returns:
-#         torch.Tensor: model output
-#     """
-#     # Flatten model parameters
-#     param_vec = parameters_to_vector(model.parameters())
-#     scaling = scaling.to(param_vec.device)
-#     assert param_vec.shape == scaling.shape, "Scaling vector size mismatch"
-
-#     # Vectorized rescaling
-#     rescaled_vec = param_vec * scaling
-
-#     # Build dictionary of rescaled parameters for functional_call
-#     rescaled_params = {
-#         name: tensor.view_as(p).requires_grad_()
-#         for name, tensor, p in zip(
-#             [name for name, _ in model.named_parameters()],
-#             rescaled_vec.split([p.numel() for p in model.parameters()]),
-#             model.parameters()
-#         )
-#     }
-
-#     # Forward using functional_call
-#     return functional_call(model, rescaled_params, (x,))
-
 
 def hessian_2(model, inputs):
     """
@@ -596,3 +566,223 @@ def compute_G_matrix(model) -> torch.Tensor:
     G[off_diag_mask] = G[off_diag_mask] / 4.0
 
     return G
+
+
+@torch.jit.script
+def update_z_polynomial_jit(g, B, nb_iter: int, tol: float = 1e-6) -> torch.Tensor:
+    z = torch.zeros(B.shape[1], dtype=torch.float64, device=B.device)
+    # Do one pass on every z_h
+    # Maintain BZ incrementally: BZ = B @ Z
+    BZ = torch.zeros(B.shape[0], dtype=z.dtype, device=z.device)
+
+    n_params_tensor = B.shape[0]
+    H = B.shape[1]
+    # BZ = torch.zeros(n_params_tensor)
+
+    mask_in = (B == -1)
+    mask_out = (B == 1)
+    mask_other = (B == 0)
+    card_in = mask_in.sum(dim=0)   # [H]
+    card_out = mask_out.sum(dim=0)  # [H]
+
+    for k in range(nb_iter):
+        delta_total = 0.0
+        for h in range(H):
+            b_h = B[:, h]
+
+            # directly use precomputed card
+            A_h = int(card_in[h].item()) - int(card_out[h].item())
+
+            # Leave-one-out energy vector
+            Y_h = BZ - b_h * z[h]
+            y_bar = Y_h.max()
+            E = torch.exp(Y_h - y_bar) * g
+
+            # sums using masks
+            B_h = (E * mask_out[:, h]).sum()
+            C_h = (E * mask_in[:, h]).sum()
+            D_h = (E * mask_other[:, h]).sum()
+
+            # Polynomial coefficients
+            a = B_h * (A_h + n_params_tensor)
+            b = D_h * A_h
+            c = C_h * (A_h - n_params_tensor)
+
+            disc = b * b - 4.0 * a * c
+            sqrt_disc = torch.sqrt(disc)
+            x1 = (-b + sqrt_disc) / (2.0 * a)
+            x2 = (-b - sqrt_disc) / (2.0 * a)
+
+            z_new = torch.log(torch.maximum(x1, x2))
+
+            # Update Z[h] and incrementally refresh BZ
+            delta = z_new - z[h]
+            if delta != 0.0:
+                delta_total += abs(delta)
+                BZ = BZ + b_h * delta
+                z[h] = z_new
+        if delta_total < tol:
+            break
+    return BZ
+
+def optimize_neuron_rescaling_polynomial_jitted(model, n_iter=10, tol=1e-6) -> torch.Tensor:
+    device = next(model.parameters()).device
+    dtype = torch.double
+    linear_indices = [i for i, layer in enumerate(model.model) if isinstance(layer, nn.Linear)]
+    n_params = sum(p.numel() for p in model.parameters())
+    n_params_tensor = torch.tensor(n_params, dtype=dtype, device=device)
+    n_hidden_neurons = sum(model.model[i].out_features for i in linear_indices[:-1])
+    B = compute_matrix_B(model).to(device=device, dtype=dtype)     # shape: [m, n_hidden_neurons]
+    diag_G = compute_diag_G(model).to(device=device, dtype=dtype)  # shape: [m], elementwise factor
+    BZ = update_z_polynomial_jit(diag_G, B, n_iter)
+    return BZ
+
+
+@torch.jit.script
+def update_z_polynomial_jit_sparse(g, pos_cols: list[torch.Tensor], neg_cols: list[torch.Tensor], nb_iter: int, n_hidden: int, tol: float = 1e-6) -> torch.Tensor:
+    device = g.device
+    dtype = torch.double
+    n_params = g.shape[0]
+    H = n_hidden    
+    Z = torch.zeros(H, dtype=torch.float64, device=device)
+    BZ = torch.zeros(n_params, dtype=dtype, device=device) 
+    for k in range(nb_iter):
+        delta_total = 0.0
+        for h in range(H):
+            out_h, in_h = pos_cols[h], neg_cols[h]
+
+            mask_in = torch.zeros(n_params, dtype=torch.bool, device=device)
+            mask_out = torch.zeros(n_params, dtype=torch.bool, device=device)
+            mask_in[in_h] = True
+            mask_out[out_h] = True
+            remaining = torch.logical_not(torch.logical_or(mask_in, mask_out))
+            other_h = torch.nonzero(remaining).flatten()
+
+            # other_h = (~(mask_in | mask_out)).nonzero(as_tuple=True)[0]
+
+            card_in_h  = int(in_h.numel())
+            card_out_h = int(out_h.numel())
+
+            bhzh = Z[h]*(mask_out.long()- mask_in.long())
+
+            
+            Y_h = BZ - bhzh  # shape: [m]
+            y_bar = Y_h.max()
+            E = torch.exp(Y_h - y_bar) * g  # shape: [m]
+
+            A_h = (card_in_h - card_out_h)
+            B_h = E[out_h].sum()
+            
+            C_h = E[in_h].sum()
+            D_h = E[other_h].sum()
+
+            # Polynomial coefficients
+            a = B_h * (A_h + n_params)
+            b = D_h * A_h
+            c = C_h * (A_h - n_params)
+
+            disc = b * b - 4.0 * a * c
+            sqrt_disc = torch.sqrt(disc)
+            x1 = (-b + sqrt_disc) / (2.0 * a)
+            x2 = (-b - sqrt_disc) / (2.0 * a)
+
+            z_new = torch.log(torch.maximum(x1, x2))
+
+            # Update Z[h] and incrementally refresh BZ
+            delta = z_new - Z[h]
+            if delta != 0.0:
+                delta_total += abs(delta)
+                bh_delta = delta*(mask_out.long()- mask_in.long())
+                BZ = BZ + bh_delta
+                Z[h] = z_new
+        if delta_total < tol:
+            break
+    return BZ
+
+def optimize_neuron_rescaling_polynomial_jitted_sparse(model, n_iter=10, tol=1e-6) -> torch.Tensor:
+    device = next(model.parameters()).device
+    dtype = torch.double
+    linear_indices = [i for i, layer in enumerate(model.model) if isinstance(layer, nn.Linear)]
+    n_hidden_neurons = sum(model.model[i].out_features for i in linear_indices[:-1])
+    diag_G = compute_diag_G(model).to(device=device, dtype=dtype)  # shape: [m], elementwise factor
+    pos_cols, neg_cols = compute_sparse_B_fast(model)
+    BZ = update_z_polynomial_jit_sparse(diag_G,pos_cols, neg_cols, n_iter, n_hidden_neurons, tol)
+    return BZ
+
+def compute_sparse_B_fast(model: nn.Module):
+    linear_layers = [m for m in model.modules() if isinstance(m, nn.Linear)]
+    if len(linear_layers) < 2:
+        raise ValueError("Au moins deux nn.Linear sont nécessaires.")
+
+    starts, n_params = _param_start_offsets(model)
+    n_hidden = sum(layer.out_features for layer in linear_layers[:-1])
+    device = next(model.parameters()).device
+
+    # On construit d'abord 2 grands vecteurs
+    pos_rows_all = []
+    pos_cols_all = []
+    neg_rows_all = []
+    neg_cols_all = []
+
+    col_start = 0
+    for l, (layer, next_layer) in enumerate(zip(linear_layers[:-1], linear_layers[1:])):
+        o = layer.out_features
+        i = layer.in_features
+        on, inn = next_layer.weight.shape
+        assert inn == o
+
+        col_end = col_start + o
+
+        w0 = layer.weight        # [o, i]
+        w0_start, _ = starts[id(w0)]
+
+        # Lignes du bloc W0 : shape (o, i)
+        rows_w0 = w0_start + (torch.arange(o, device=device)[:, None] * i
+                              + torch.arange(i, device=device)[None, :])
+
+        # Colonnes du bloc : shape (o, i)
+        cols_w0 = col_start + torch.arange(o, device=device)[:, None].expand(o, i)
+
+        neg_rows_all.append(rows_w0.reshape(-1))
+        neg_cols_all.append(cols_w0.reshape(-1))
+
+
+        if layer.bias is not None:
+            b0 = layer.bias
+            b0_start, _ = starts[id(b0)]
+
+            rows_b0 = b0_start + torch.arange(o, device=device)
+            cols_b0 = col_start + torch.arange(o, device=device)
+
+            neg_rows_all.append(rows_b0)
+            neg_cols_all.append(cols_b0)
+
+
+        w1 = next_layer.weight
+        w1_start, _ = starts[id(w1)]
+
+        # Lignes du bloc W1 : shape (o, on)
+        rows_w1 = w1_start + torch.arange(o, device=device)[:, None] \
+                            + torch.arange(on, device=device)[None, :] * o
+
+        # Colonnes du bloc : shape (o, on)
+        cols_w1 = col_start + torch.arange(o, device=device)[:, None].expand(o, on)
+
+        pos_rows_all.append(rows_w1.reshape(-1))
+        pos_cols_all.append(cols_w1.reshape(-1))
+
+        col_start = col_end
+
+    # Concat uniques
+    pos_rows_all = torch.cat(pos_rows_all)
+    pos_cols_all = torch.cat(pos_cols_all)
+    neg_rows_all = torch.cat(neg_rows_all)
+    neg_cols_all = torch.cat(neg_cols_all)
+
+    # Maintenant on sépare par colonne (H colonnes)
+    # On veut : liste[t] = indices des rows où col == t
+    # pos_rows_all, pos_cols_all sont déjà triés !
+    pos_cols = split_sorted_by_column(pos_cols_all, pos_rows_all, n_hidden)
+    neg_cols = split_sorted_by_column(neg_cols_all, neg_rows_all, n_hidden)
+
+    return pos_cols, neg_cols

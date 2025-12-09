@@ -1,5 +1,5 @@
 import torch
-from pathcond.mlp import MNISTMLP
+from pathcond.models import MNISTMLP
 
 
 def test_forward_shape():

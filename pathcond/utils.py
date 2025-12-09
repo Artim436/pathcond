@@ -117,3 +117,25 @@ def _param_start_offsets(model):
         starts[id(p)] = (offset, offset + n)
         offset += n
     return starts, offset  # offset final == n_params
+
+def split_sorted_by_column(col_all: torch.Tensor,
+                           row_all: torch.Tensor,
+                           n_hidden: int):
+    """
+    col_all est déjà trié !
+    row_all a la même taille.
+    On renvoie une liste de n_hidden tensors row_all[col == h],
+    en exploitant les segments consécutifs.
+    """
+
+    # 1) Nombre d'éléments par colonne
+    counts = torch.bincount(col_all, minlength=n_hidden)
+
+    # 2) Début et fin des segments
+    ends = torch.cumsum(counts, dim=0)
+    starts = torch.cat([torch.tensor([0], device=col_all.device), ends[:-1]])
+
+    # 3) Découpage O(H)
+    out = [row_all[starts[h] : ends[h]] for h in range(n_hidden)]
+
+    return out
