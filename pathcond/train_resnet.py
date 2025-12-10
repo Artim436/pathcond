@@ -3,7 +3,7 @@ from typing import Tuple, List
 import torch
 import torch.nn as nn
 from pathcond.data import mnist_loaders, cifar10_loaders
-from pathcond.rescaling_polyn_resnet import optimize_neuron_rescaling_polynomial_jitted_resnet, reweight_model_resnet, optimize_neuron_rescaling_polynomial_jitted_resnet_iter
+from pathcond.rescaling_polyn_resnet import optimize_neuron_rescaling_polynomial_jitted_sparse, reweight_model_resnet
 from pathcond.plot import plot_rescaling_analysis
 from tqdm import tqdm
 from pathcond.models import resnet18_mnist, resnet18_cifar10
@@ -200,16 +200,14 @@ def rescaling_path_dynamics(model, verbose: bool = False, soft: bool = True, nb_
         inputs = torch.randn(16, 1, 28, 28).to(device)
     else:
         inputs = torch.randn(16, 3, 32, 32).to(device)
-    BZ_opt, Z_opt = optimize_neuron_rescaling_polynomial_jitted_resnet_iter(model=model, n_iter=nb_iter, tol=1e-6)
+    BZ_opt, Z_opt =optimize_neuron_rescaling_polynomial_jitted_sparse(model, n_iter=1, tol=1e-6)
     final_model = reweight_model_resnet(model, BZ_opt, Z_opt).to(dtype=torch.float32, device=device)
-
-
-
     final_model = final_model.to(device).eval()
     model.eval()
+
     final_output = final_model(inputs)
     original_output = model(inputs)
-    torch.allclose(original_output, final_output, atol=1e-5)
+    assert torch.allclose(original_output, final_output, atol=1e-5)
     # print("✅ Sortie finale préservée après rescaling.")
 
     return final_model
