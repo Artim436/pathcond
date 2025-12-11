@@ -621,11 +621,10 @@ def update_z_polynomial_jit_sparse(g, pos_cols: list[torch.Tensor], neg_cols: li
 
             # Update Z[h] and incrementally refresh BZ
             delta = z_new - Z[h]
-            if delta != 0.0:
-                delta_total += abs(delta)
-                BZ[out_h] += delta
-                BZ[in_h] -= delta
-                Z[h] = z_new
+            delta_total += abs(delta)
+            BZ[out_h] += delta
+            BZ[in_h] -= delta
+            Z[h] = z_new
         if delta_total < tol:
             break
     return BZ
