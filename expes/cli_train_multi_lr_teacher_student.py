@@ -1,8 +1,8 @@
 import argparse
-from pathcond.train_multi_lr_teacher_student import fit_with_telportation
+from expes.train_multi_lr_teacher_student import fit_with_telportation
 from pathcond.plot import plot_mean_var_curves, plot_boxplots
 from pathcond.utils import _ensure_outdir
-from pathcond.cli_boxplots_teacher_student import main as plot_boxplots_toy
+from expes.cli_boxplots_teacher_student import main as plot_boxplots_toy
 import torch
 
 

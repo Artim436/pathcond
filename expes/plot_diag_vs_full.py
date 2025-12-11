@@ -1,7 +1,7 @@
 import argparse
 import torch
 import matplotlib.pyplot as plt
-from .models import MNISTMLP
+from ..pathcond.models import MNISTMLP
 from pathlib import Path
 import numpy as np
 import torch.nn as nn

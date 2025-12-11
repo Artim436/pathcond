@@ -1,5 +1,5 @@
 import argparse
-from pathcond.train import fit_with_telportation, rescaling_path_dynamics
+from expes.train import fit_with_telportation, rescaling_path_dynamics
 from pathcond.plot import plot_mean_var_curves, plot_boxplots, plot_boxplots_2x2, plot_convergence_vs_final_boxplots_2x2, plot_mean_var_curves_all_lr
 from pathcond.plot import plot_mean_var_curves_triptych, plot_mean_var_curves_triptych_epochs_times_lr, plot_grad_path_length
 from pathcond.plot import plot_mean_var_curves_triptych_epochs_times_lr_archi, plot_time_vs_params

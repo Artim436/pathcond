@@ -1,5 +1,5 @@
 import argparse
-from pathcond.train import fit_with_telportation, rescaling_path_dynamics
+from expes.train import fit_with_telportation, rescaling_path_dynamics
 from pathcond.plot import plot_mean_var_curves, plot_boxplots, plot_boxplots_2x2, plot_convergence_vs_final_boxplots_2x2
 from pathlib import Path
 from pathcond.utils import _ensure_outdir

@@ -1,8 +1,8 @@
 import argparse
-from pathcond.train_multi_lr_moons import fit_with_telportation, rescaling_path_dynamics
+from expes.train_multi_lr_moons import fit_with_telportation, rescaling_path_dynamics
 from pathcond.plot import plot_mean_var_curves, plot_boxplots
 from pathcond.utils import _ensure_outdir
-from pathcond.cli_boxplots_moons import main as plot_boxplots_moons
+from expes.cli_boxplots_moons import main as plot_boxplots_moons
 import torch
 
 

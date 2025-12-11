@@ -70,12 +70,18 @@ def set_weights_for_path_norm(
     return orig_weights
 
 
-def grad_path_norm(model, device="cpu", data="mnist") -> torch.Tensor:
+def grad_path_norm(model, input_size, device="cpu") -> torch.Tensor:
+    """
+    Compute the gradient of the path-norm with respect to all parameters
+    of the model.
+    Args:
+        model (torch.nn.Module): Input model.
+        input_size (tuple): Size of the input tensor (C, H, W).
+        device (str, optional): Device to perform computations on.
+        Defaults to "cpu".
+    """
+    inputs = torch.ones(1, *input_size)  # Dummy input
     model.eval()
-    if data == "mnist":
-        inputs = torch.ones(1, 1, 32, 32)
-    else:  # cifar10
-        inputs = torch.ones(1, 3, 32, 32)
     inputs = inputs.to(device)
 
     def fct(model, inputs, device="cpu"):
@@ -111,6 +117,15 @@ def reset_model(model, orig_weights):
 
 
 def compute_diag_G(model):
+    """
+    Compute the diagonal of the G matrix for the given model.
+    G_{ii} = H_{ii}/2
+    where H is the Hessian of the function path-norm 2.
+    Args:
+        model (torch.nn.Module): Input model.
+    Returns:
+        torch.Tensor: Diagonal of the G matrix.
+    """
     orig_w = set_weights_for_path_norm(model, exponent=2, provide_original_weights=True)
     res = grad_path_norm(model, device=next(model.parameters()).device)
     reset_model(model, orig_w)
@@ -119,9 +134,13 @@ def compute_diag_G(model):
 
 def hessian_2(model, inputs):
     """
-    Calcule la Hessienne complète de la fonction scalaire
-    f(model) = model.forward_2(inputs).sum()
-    par rapport à tous les paramètres du modèle.
+    Computes the Hessian of the path-norm 2 of the given model using
+    automatic differentiation.
+    Args:
+        model (torch.nn.Module): Input model.
+        inputs (torch.Tensor): Input tensor for the model.
+    Returns:
+        torch.Tensor: Hessienne de f.
     """
     # Étape 1 : fonction scalaire
     def f(model, inputs):
@@ -168,7 +187,7 @@ def compute_G_matrix(model) -> torch.Tensor:
     return G
 
 
-def compute_sparse_B_fast(model: nn.Module):
+def compute_B_mlp(model: nn.Module):
     linear_layers = [m for m in model.modules() if isinstance(m, nn.Linear)]
     if len(linear_layers) < 2:
         raise ValueError("Au moins deux nn.Linear sont nécessaires.")
@@ -247,7 +266,7 @@ def compute_sparse_B_fast(model: nn.Module):
     return pos_cols, neg_cols
 
 
-def compute_matrix_B_cnn_sparse(model: nn.Module):
+def compute_B_cnn(model: nn.Module):
     """
     Version sparse ultra-optimisée:
     Retourne pour chaque canal k de conv1 de chaque BasicBlock :

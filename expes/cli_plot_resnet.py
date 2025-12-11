@@ -1,7 +1,7 @@
 import argparse
 from .train import fit_with_telportation, rescaling_path_dynamics
-from .plot import plot_mean_var_curves_triptych, plot_mean_var_curves_triptych_epochs_times_lr
-from .utils import _ensure_outdir
+from ..pathcond.plot import plot_mean_var_curves_triptych, plot_mean_var_curves_triptych_epochs_times_lr
+from ..pathcond.utils import _ensure_outdir
 import torch
 from pathlib import Path
 
