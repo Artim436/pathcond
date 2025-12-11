@@ -1,10 +1,9 @@
 from __future__ import annotations
-from typing import Tuple, List
+from typing import Tuple
 import torch
 import torch.nn as nn
 from pathcond.data import mnist_loaders, cifar10_loaders
-from pathcond.rescaling_polyn_resnet import optimize_neuron_rescaling_polynomial_jitted_sparse, reweight_model_cnn
-from pathcond.plot import plot_rescaling_analysis
+from pathcond.rescaling_polyn import optimize_neuron_rescaling_polynomial_jitted_sparse, reweight_model_cnn
 from tqdm import tqdm
 from pathcond.models import resnet18_mnist, resnet18_cifar10
 
@@ -38,7 +37,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device, fraction: float
         if i >= max_batches:
             break
         x, y = x.to(device), y.to(device)
-       
+
         optimizer.zero_grad()
         loss = criterion(model(x), y)
         loss.backward()
@@ -62,7 +61,7 @@ def evaluate(model, loader, device) -> float:
     return correct / total
 
 
-def fit_with_telportation(  
+def fit_with_telportation(
     epochs: int = 5,
     ep_teleport: int = 0,
     nb_lr: int = 10,
@@ -99,7 +98,7 @@ def fit_with_telportation(
         for it in range(nb_iter):
 
             torch.manual_seed(it)
-            device = torch.device( "cuda" if torch.cuda.is_available() else "cpu" )
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
             # --- construction des variantes de modèles/optimiseurs de façon déclarative
             def make_model(seed: int = 0, device=None):
@@ -108,7 +107,7 @@ def fit_with_telportation(
                 else:  # cifar10
                     model = resnet18_cifar10(num_classes=10, seed=seed).to(device)
                 return model
-            
+
             criterion = nn.CrossEntropyLoss()
 
             variants = {
@@ -129,13 +128,12 @@ def fit_with_telportation(
                     "hist_acc_tr": [],
                     "hist_acc": [],
                     "label": "ref sgd",
-                } 
+                }
             }
 
             # initialise les optimiseurs
             for v in variants.values():
                 v["optimizer"] = v["trainer"](v["model"].parameters(), lr=lr)
-
 
             ep_teleport = [ep_teleport] if isinstance(ep_teleport, int) else ep_teleport
             if data == "mnist":
@@ -154,7 +152,7 @@ def fit_with_telportation(
                     v["hist_acc"].append(acc)
 
                 # téléportation uniquement pour le modèle principal 'sgd'
-                
+
                 if ep in ep_teleport:
                     start_teleport = time.time()
                     variants["sgd"]["model"] = rescaling_path_dynamics(
@@ -183,7 +181,6 @@ def fit_with_telportation(
             ACC_TRAIN[lr_index, it, :, 0] = torch.tensor(acc_history_tr)
             ACC_TRAIN[lr_index, it, :, 1] = torch.tensor(acc_history_ref_tr)
 
-
             acc_history = variants["sgd"]["hist_acc"]
             acc_history_ref = variants["ref_sgd"]["hist_acc"]
             ACC_TEST[lr_index, it, :, 0] = torch.tensor(acc_history)
@@ -194,16 +191,14 @@ def fit_with_telportation(
     )
 
 
-
 def rescaling_path_dynamics(model, verbose: bool = False, soft: bool = True, nb_iter=1, name: str = "sgd", device="cpu", data="mnist"):
     """Test de validation de la fonctionnalité de rescaling par neurone."""
-
 
     if data == "mnist":
         inputs = torch.randn(16, 1, 28, 28).to(device)
     else:
         inputs = torch.randn(16, 3, 32, 32).to(device)
-    BZ_opt, Z_opt =optimize_neuron_rescaling_polynomial_jitted_sparse(model, n_iter=1, tol=1e-6)
+    BZ_opt, Z_opt = optimize_neuron_rescaling_polynomial_jitted_sparse(model, n_iter=1, tol=1e-6)
     final_model = reweight_model_cnn(model, BZ_opt, Z_opt).to(dtype=torch.float32, device=device)
     final_model = final_model.to(device).eval()
     model.eval()
@@ -214,5 +209,3 @@ def rescaling_path_dynamics(model, verbose: bool = False, soft: bool = True, nb_
     # print("✅ Sortie finale préservée après rescaling.")
 
     return final_model
-
-

@@ -2,12 +2,56 @@ import torch
 from torch import nn
 from typing import Optional, Callable, Dict
 from pathlib import Path
+from torchvision.models.resnet import BasicBlock
+
+
+def count_hidden_channels_generic(model):
+    """
+    Compte les canaux de sortie (out_channels) de la première convolution
+    de TOUS les BasicBlock trouvés dans un modèle.
+    Ceci fonctionnera pour ResNet-18, 34, ou tout modèle utilisant BasicBlock.
+    """
+    total_channels = 0
+
+    # 1. Utilisation de la fonction générique pour itérer sur tous les BasicBlock
+    for name, block in iter_modules_by_type(model, BasicBlock):
+
+        # 2. Le reste de votre logique reste la même
+        #    'block' est ici l'instance de BasicBlock
+        if hasattr(block, 'conv1') and isinstance(block.conv1, nn.Conv2d):
+            total_channels += block.conv1.out_channels
+        else:
+            # Sécurité si un bloc BasicBlock n'a pas l'attribut 'conv1'
+            print(f"Avertissement: Le bloc {name} ne possède pas l'attribut 'conv1' de type Conv2d.")
+
+    return total_channels
+
+
+def iter_modules_by_type(model, module_type):
+    """
+    Itère sur tous les sous-modules d'un modèle PyTorch qui sont
+    des instances du type de module spécifié.
+
+    Args:
+        model (nn.Module): Le modèle CNN (ex: ResNet, VGG, CustomModel).
+        module_type (type/tuple[type]): Le type de module à rechercher (ex: nn.Conv2d, BasicBlock).
+
+    Yields:
+        (name, module): Le nom et l'instance du module trouvé.
+    """
+    # named_modules() itère sur TOUS les modules du plus haut niveau au plus bas niveau
+    for name, module in model.named_modules():
+        if isinstance(module, module_type):
+            # Évite d'itérer sur le modèle lui-même s'il est du type recherché
+            if module is not model:
+                yield name, module
 
 
 def _ensure_outdir(outdir: str) -> Path:
     p = Path(outdir)
     p.mkdir(parents=True, exist_ok=True)
     return p
+
 
 @torch.no_grad()
 def rebuild_optimizer_with_state_from_old(
@@ -118,6 +162,7 @@ def _param_start_offsets(model):
         offset += n
     return starts, offset  # offset final == n_params
 
+
 def split_sorted_by_column(col_all: torch.Tensor,
                            row_all: torch.Tensor,
                            n_hidden: int):
@@ -136,6 +181,6 @@ def split_sorted_by_column(col_all: torch.Tensor,
     starts = torch.cat([torch.tensor([0], device=col_all.device), ends[:-1]])
 
     # 3) Découpage O(H)
-    out = [row_all[starts[h] : ends[h]] for h in range(n_hidden)]
+    out = [row_all[starts[h]: ends[h]] for h in range(n_hidden)]
 
     return out

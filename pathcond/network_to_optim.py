@@ -1,26 +1,9 @@
-import copy
 import torch
 import torch.nn as nn
 from tqdm import tqdm
-import math
 from pathcond.utils import _param_start_offsets, split_sorted_by_column
-from torch.nn.utils import parameters_to_vector, vector_to_parameters
 from torchvision.models.resnet import BasicBlock
-
-
-def grad_path_norm(model, device="cpu", data="mnist") -> torch.Tensor:
-    model.eval()
-    if data == "mnist":
-        inputs = torch.ones(1, 1, 32, 32)
-    else:  # cifar10
-        inputs = torch.ones(1, 3, 32, 32)
-    inputs = inputs.to(device)
-    def fct(model, inputs, device="cpu"):
-        model = model.to(device)
-        return model(inputs).sum().to(device)
-    grad = torch.autograd.grad(fct(model, inputs, device=device), model.parameters())
-    grad = [g.view(-1) for g in grad]  # Aplatir les gradients
-    return torch.cat(grad)  # Concaténer les gradients en un seul tenseur
+from pathcond.utils import count_hidden_channels_generic, iter_modules_by_type
 
 
 def set_weights_for_path_norm(
@@ -87,6 +70,22 @@ def set_weights_for_path_norm(
     return orig_weights
 
 
+def grad_path_norm(model, device="cpu", data="mnist") -> torch.Tensor:
+    model.eval()
+    if data == "mnist":
+        inputs = torch.ones(1, 1, 32, 32)
+    else:  # cifar10
+        inputs = torch.ones(1, 3, 32, 32)
+    inputs = inputs.to(device)
+
+    def fct(model, inputs, device="cpu"):
+        model = model.to(device)
+        return model(inputs).sum().to(device)
+    grad = torch.autograd.grad(fct(model, inputs, device=device), model.parameters())
+    grad = [g.view(-1) for g in grad]  # Aplatir les gradients
+    return torch.cat(grad)  # Concaténer les gradients en un seul tenseur
+
+
 def reset_model(model, orig_weights):
     """
     Reset weights and maxpool layer of a model.
@@ -111,168 +110,142 @@ def reset_model(model, orig_weights):
             m.running_var.data = orig_weights[n + ".running_var"]
 
 
-def compute_diag_G(model, eps: float = 1e-12):
+def compute_diag_G(model):
     orig_w = set_weights_for_path_norm(model, exponent=2, provide_original_weights=True)
     res = grad_path_norm(model, device=next(model.parameters()).device)
     reset_model(model, orig_w)
     return res
 
-def iter_modules_by_type(model, module_type):
+
+def hessian_2(model, inputs):
     """
-    Itère sur tous les sous-modules d'un modèle PyTorch qui sont
-    des instances du type de module spécifié.
-
-    Args:
-        model (nn.Module): Le modèle CNN (ex: ResNet, VGG, CustomModel).
-        module_type (type/tuple[type]): Le type de module à rechercher (ex: nn.Conv2d, BasicBlock).
-
-    Yields:
-        (name, module): Le nom et l'instance du module trouvé.
+    Calcule la Hessienne complète de la fonction scalaire
+    f(model) = model.forward_2(inputs).sum()
+    par rapport à tous les paramètres du modèle.
     """
-    # named_modules() itère sur TOUS les modules du plus haut niveau au plus bas niveau
-    for name, module in model.named_modules():
-        if isinstance(module, module_type):
-            # Évite d'itérer sur le modèle lui-même s'il est du type recherché
-            if module is not model:
-                yield name, module
+    # Étape 1 : fonction scalaire
+    def f(model, inputs):
+        return model.forward_squared(inputs).sum()
 
-def count_hidden_channels_generic(model):
+    # Étape 2 : premier gradient ∇f
+    grad = torch.autograd.grad(f(model, inputs), model.parameters(), create_graph=True)
+    grad_vec = torch.cat([g.contiguous().view(-1) for g in grad])
+
+    # Étape 3 : calcul ligne par ligne de la Hessienne
+    hessian_rows = []
+    print("Computing Hessian...")
+    for i in tqdm(range(grad_vec.numel())):
+        grad2 = torch.autograd.grad(grad_vec[i], model.parameters(), retain_graph=True)
+        row = torch.cat([g.contiguous().view(-1) for g in grad2])
+        hessian_rows.append(row)
+
+    # Étape 4 : empilement en matrice
+    hessian = torch.stack(hessian_rows)
+
+    return hessian
+
+
+def compute_G_matrix(model) -> torch.Tensor:
     """
-    Compte les canaux de sortie (out_channels) de la première convolution
-    de TOUS les BasicBlock trouvés dans un modèle.
-    Ceci fonctionnera pour ResNet-18, 34, ou tout modèle utilisant BasicBlock.
+    Calcule la matrice G pour le modèle donné et les entrées.
+    G_{ij} = H_{ij}/4 si i ≠ j
+    G_{ii} = H_{ii}/2 si i = j
     """
-    total_channels = 0
+    inputs = torch.ones(1, 1, model.model[0].in_features)  # Dummy input for G computation
+    hessian = hessian_2(model, inputs)  # supposé renvoyer un tenseur carré (H)
 
-    # 1. Utilisation de la fonction générique pour itérer sur tous les BasicBlock
-    for name, block in iter_modules_by_type(model, BasicBlock):
+    # Copie pour ne pas modifier H
+    G = hessian.clone()
 
-        # 2. Le reste de votre logique reste la même
-        #    'block' est ici l'instance de BasicBlock
-        if hasattr(block, 'conv1') and isinstance(block.conv1, nn.Conv2d):
-            total_channels += block.conv1.out_channels
-        else:
-            # Sécurité si un bloc BasicBlock n'a pas l'attribut 'conv1'
-            print(f"Avertissement: Le bloc {name} ne possède pas l'attribut 'conv1' de type Conv2d.")
+    # Division des diagonales par 2
+    diag_indices = torch.arange(G.shape[0], device=G.device)
+    G[diag_indices, diag_indices] = G[diag_indices, diag_indices] / 2.0
 
-    return total_channels
+    # Division du reste par 4
+    off_diag_mask = ~torch.eye(G.shape[0], dtype=bool, device=G.device)  # True hors daig et Flase sur la diag
+    G[off_diag_mask] = G[off_diag_mask] / 4.0
+
+    return G
 
 
-def reweight_model_cnn(model: nn.Module, BZ: torch.Tensor, Z: torch.Tensor) -> nn.Module:
-    """
-    Reweight a model according to a log-rescaling vector BZ.
+def compute_sparse_B_fast(model: nn.Module):
+    linear_layers = [m for m in model.modules() if isinstance(m, nn.Linear)]
+    if len(linear_layers) < 2:
+        raise ValueError("Au moins deux nn.Linear sont nécessaires.")
 
-    Args:
-        model (nn.Module): Pytorch model.
-        BZ (torch.Tensor): log-rescaling vector of size [n_params].
-
-    Returns:
-        nn.Module: Reweighted model (on same device as input model).
-    """
-    # Deep copy to avoid modifying the original
-    new_model = copy.deepcopy(model)
-    new_model.eval()
-
-    # Detect device of model
+    starts, n_params = _param_start_offsets(model)
+    n_hidden = sum(layer.out_features for layer in linear_layers[:-1])
     device = next(model.parameters()).device
-    new_model.to(device)
 
-    # Flatten parameters into one vector
-    param_vec = parameters_to_vector(new_model.parameters())
+    # On construit d'abord 2 grands vecteurs
+    pos_rows_all = []
+    pos_cols_all = []
+    neg_rows_all = []
+    neg_cols_all = []
 
-    # Ensure BZ is on same device and shape is correct
-    BZ = BZ.to(device)
-    assert BZ.shape == param_vec.shape, \
-        f"Taille de BZ {BZ.shape} incompatible avec {param_vec.shape}"
+    col_start = 0
+    for l, (layer, next_layer) in enumerate(zip(linear_layers[:-1], linear_layers[1:])):
+        o = layer.out_features
+        i = layer.in_features
+        on, inn = next_layer.weight.shape
+        assert inn == o
 
-    # Vectorized reweighting
-    reweighted_vec = param_vec * torch.exp(-0.5 * BZ)
+        col_end = col_start + o
 
-    #modifie running mean and variance of batchnorm layers
-    start_rmean = 0
+        w0 = layer.weight        # [o, i]
+        w0_start, _ = starts[id(w0)]
 
-    with torch.no_grad():
-        for lname, block in iter_modules_by_type(model, BasicBlock):
-            bn1 = block.bn1
-            o = block.conv1.out_channels
-            # running mean
-            rmean = bn1.running_mean  # [o]
-            rmean_start = start_rmean
-            rmean_end = start_rmean + o
-            bzrmean = Z[rmean_start:rmean_end]
-            rmean *= torch.exp(0.5 * bzrmean)
-            start_rmean += o
-    # Copy back into model
-    vector_to_parameters(reweighted_vec, new_model.parameters())
+        # Lignes du bloc W0 : shape (o, i)
+        rows_w0 = w0_start + (torch.arange(o, device=device)[:, None] * i
+                              + torch.arange(i, device=device)[None, :])
 
-    return new_model
+        # Colonnes du bloc : shape (o, i)
+        cols_w0 = col_start + torch.arange(o, device=device)[:, None].expand(o, i)
 
+        neg_rows_all.append(rows_w0.reshape(-1))
+        neg_cols_all.append(cols_w0.reshape(-1))
 
-@torch.jit.script
-def update_z_polynomial_jit_sparse(g, pos_cols: list[torch.Tensor], neg_cols: list[torch.Tensor], nb_iter: int, n_hidden: int, tol: float = 1e-6) -> tuple[torch.Tensor, torch.Tensor]:
-    device = g.device
-    dtype = torch.double
-    n_params = g.shape[0]
-    H = n_hidden    
-    Z = torch.zeros(H, dtype=torch.float64, device=device)
-    BZ = torch.zeros(n_params, dtype=dtype, device=device)
-    for k in range(nb_iter):
-        delta_total = 0.0
-        for h in range(H):
-            out_h, in_h = pos_cols[h], neg_cols[h]
+        if layer.bias is not None:
+            b0 = layer.bias
+            b0_start, _ = starts[id(b0)]
 
-            # other_h = (~(mask_in | mask_out)).nonzero(as_tuple=True)[0] unused in jitted code
+            rows_b0 = b0_start + torch.arange(o, device=device)
+            cols_b0 = col_start + torch.arange(o, device=device)
 
-            card_in_h  = int(in_h.numel())
-            card_out_h = int(out_h.numel())
+            neg_rows_all.append(rows_b0)
+            neg_cols_all.append(cols_b0)
 
-            Z_h = Z[h].item()
-      
-            # Y_h = BZ - bhzh  # O(n_params)
-            Y_h = BZ.clone() # O(n_params)
-            Y_h[out_h] = BZ[out_h] - Z_h
-            Y_h[in_h] = BZ[in_h] + Z_h
-            
-            y_bar = Y_h.max() # O(n_params)
-            E = torch.exp(Y_h - y_bar) * g  # O(n_params)
+        w1 = next_layer.weight
+        w1_start, _ = starts[id(w1)]
 
-            A_h = (card_in_h - card_out_h)
-            B_h = E[out_h].sum()
-            
-            C_h = E[in_h].sum()
-            E_sum = E.sum()
-            D_h = E_sum - B_h - C_h # avoid computing other_h
+        # Lignes du bloc W1 : shape (o, on)
+        rows_w1 = w1_start + torch.arange(o, device=device)[:, None] \
+            + torch.arange(on, device=device)[None, :] * o
 
-            # Polynomial coefficients
-            a = B_h * (A_h + n_params)
-            b = D_h * A_h
-            c = C_h * (A_h - n_params)
+        # Colonnes du bloc : shape (o, on)
+        cols_w1 = col_start + torch.arange(o, device=device)[:, None].expand(o, on)
 
-            disc = b * b - 4.0 * a * c
-            sqrt_disc = torch.sqrt(disc)
-            x1 = (-b + sqrt_disc) / (2.0 * a)
-            x2 = (-b - sqrt_disc) / (2.0 * a)
+        pos_rows_all.append(rows_w1.reshape(-1))
+        pos_cols_all.append(cols_w1.reshape(-1))
 
-            z_new = torch.log(torch.maximum(x1, x2))
+        col_start = col_end
 
-            # Update Z[h] and incrementally refresh BZ
-            delta = z_new - Z[h]
-            delta_total += abs(delta)
-            BZ[out_h] += delta
-            BZ[in_h] -= delta
-            Z[h] = z_new
-        if delta_total < tol:
-            break
-    return BZ, Z
+    # Concat uniques
+    pos_rows_all = torch.cat(pos_rows_all)
+    pos_cols_all = torch.cat(pos_cols_all)
+    neg_rows_all = torch.cat(neg_rows_all)
+    neg_cols_all = torch.cat(neg_cols_all)
+    neg_cols_all, idx = torch.sort(neg_cols_all)  # trier les colonnes négatives
+    neg_rows_all = neg_rows_all[idx]
 
-def optimize_neuron_rescaling_polynomial_jitted_sparse(model, n_iter=10, tol=1e-6) -> tuple[torch.Tensor, torch.Tensor]:
-    device = next(model.parameters()).device
-    dtype = torch.double
-    diag_G = compute_diag_G(model).to(device=device, dtype=dtype)  # shape: [m], elementwise factor
-    pos_cols, neg_cols = compute_matrix_B_cnn_sparse(model)
-    n_hidden_neurons = count_hidden_channels_generic(model)
-    BZ, Z = update_z_polynomial_jit_sparse(diag_G,pos_cols, neg_cols, n_iter, n_hidden_neurons, tol)
-    return BZ, Z
+    # Maintenant on sépare par colonne (H colonnes)
+    # On veut : liste[t] = indices des rows où col == t
+    # pos_rows_all, pos_cols_all sont déjà triés !
+    pos_cols = split_sorted_by_column(pos_cols_all, pos_rows_all, n_hidden)
+    neg_cols = split_sorted_by_column(neg_cols_all, neg_rows_all, n_hidden)
+
+    return pos_cols, neg_cols
+
 
 def compute_matrix_B_cnn_sparse(model: nn.Module):
     """
@@ -363,9 +336,9 @@ def compute_matrix_B_cnn_sparse(model: nn.Module):
     pos_cols_all = torch.cat(pos_cols_all)
     neg_rows_all = torch.cat(neg_rows_all)
     neg_cols_all = torch.cat(neg_cols_all)
-    neg_cols_all, idx = torch.sort(neg_cols_all) # trier les colonnes négatives
+    neg_cols_all, idx = torch.sort(neg_cols_all)  # trier les colonnes négatives
     neg_rows_all = neg_rows_all[idx]
-    pos_cols_all, idx = torch.sort(pos_cols_all) # trier les colonnes positives
+    pos_cols_all, idx = torch.sort(pos_cols_all)  # trier les colonnes positives
     pos_rows_all = pos_rows_all[idx]
     pos_cols = split_sorted_by_column(pos_cols_all, pos_rows_all, n_hidden)
     neg_cols = split_sorted_by_column(neg_cols_all, neg_rows_all, n_hidden)
