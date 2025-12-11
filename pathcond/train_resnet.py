@@ -3,7 +3,7 @@ from typing import Tuple, List
 import torch
 import torch.nn as nn
 from pathcond.data import mnist_loaders, cifar10_loaders
-from pathcond.rescaling_polyn_resnet import optimize_neuron_rescaling_polynomial_jitted_sparse, reweight_model_resnet
+from pathcond.rescaling_polyn_resnet import optimize_neuron_rescaling_polynomial_jitted_sparse, reweight_model_cnn
 from pathcond.plot import plot_rescaling_analysis
 from tqdm import tqdm
 from pathcond.models import resnet18_mnist, resnet18_cifar10
@@ -154,11 +154,14 @@ def fit_with_telportation(
                     v["hist_acc"].append(acc)
 
                 # téléportation uniquement pour le modèle principal 'sgd'
+                
                 if ep in ep_teleport:
+                    start_teleport = time.time()
                     variants["sgd"]["model"] = rescaling_path_dynamics(
                         variants["sgd"]["model"], verbose=False, soft=True, name="sgd", nb_iter=nb_iter_optim_rescaling, device=device, data=data
                     )
-                    # print(f"Rescaling applied in {end_teleport - start_teleport:.2f} seconds.")
+                    end_teleport = time.time()
+                    print(f"Rescaling applied in {end_teleport - start_teleport:.2f} seconds.")
                     variants["sgd"]["optimizer"] = torch.optim.SGD(
                         variants["sgd"]["model"].parameters(), lr=lr
                     )
@@ -201,7 +204,7 @@ def rescaling_path_dynamics(model, verbose: bool = False, soft: bool = True, nb_
     else:
         inputs = torch.randn(16, 3, 32, 32).to(device)
     BZ_opt, Z_opt =optimize_neuron_rescaling_polynomial_jitted_sparse(model, n_iter=1, tol=1e-6)
-    final_model = reweight_model_resnet(model, BZ_opt, Z_opt).to(dtype=torch.float32, device=device)
+    final_model = reweight_model_cnn(model, BZ_opt, Z_opt).to(dtype=torch.float32, device=device)
     final_model = final_model.to(device).eval()
     model.eval()
 

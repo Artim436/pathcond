@@ -5,6 +5,7 @@ from tqdm import tqdm
 import math
 from pathcond.utils import _param_start_offsets, split_sorted_by_column
 from torch.nn.utils import parameters_to_vector, vector_to_parameters
+from torchvision.models.resnet import BasicBlock
 
 
 def grad_path_norm(model, device="cpu", data="mnist") -> torch.Tensor:
@@ -116,181 +117,48 @@ def compute_diag_G(model, eps: float = 1e-12):
     reset_model(model, orig_w)
     return res
 
-
-def _iter_basicblocks_resnet18(model: nn.Module):
+def iter_modules_by_type(model, module_type):
     """
-    Itère (dans l'ordre forward) sur tous les BasicBlock de layer1..layer4.
-    Renvoie des tuples (block, layer_name, block_idx).
+    Itère sur tous les sous-modules d'un modèle PyTorch qui sont
+    des instances du type de module spécifié.
+
+    Args:
+        model (nn.Module): Le modèle CNN (ex: ResNet, VGG, CustomModel).
+        module_type (type/tuple[type]): Le type de module à rechercher (ex: nn.Conv2d, BasicBlock).
+
+    Yields:
+        (name, module): Le nom et l'instance du module trouvé.
     """
-    for lname in ["layer1", "layer2", "layer3", "layer4"]:
-        layer = getattr(model, lname)
-        for i, block in enumerate(layer):  # torchvision.models.resnet.BasicBlock
-            yield block, lname, i
+    # named_modules() itère sur TOUS les modules du plus haut niveau au plus bas niveau
+    for name, module in model.named_modules():
+        if isinstance(module, module_type):
+            # Évite d'itérer sur le modèle lui-même s'il est du type recherché
+            if module is not model:
+                yield name, module
 
-
-# ---------- Comptage des "neurones" cachés (canaux conv1) ----------
-def _count_hidden_channels_resnet18(model: nn.Module) -> int:
-    total = 0
-    for block, _, _ in _iter_basicblocks_resnet18(model):
-        total += block.conv1.out_channels
-    return total
-
-
-# ---------- Construction de B au niveau canal (conv1 -> conv2) ----------
-def compute_matrix_B_resnet18(model: nn.Module) -> torch.Tensor:
+def count_hidden_channels_generic(model):
     """
-    Matrice B (int8) pour le rescaling par canal des sorties de conv1 dans chaque BasicBlock.
-    Pour chaque canal k de conv1 d'un bloc:
-      -1 sur conv1.weight[k, :, :, :]  (poids entrants du canal)
-      -1 sur bn1.bias[k]
-      +1 sur conv2.weight[:, k, :, :]  (poids sortants vers la couche suivante)
+    Compte les canaux de sortie (out_channels) de la première convolution
+    de TOUS les BasicBlock trouvés dans un modèle.
+    Ceci fonctionnera pour ResNet-18, 34, ou tout modèle utilisant BasicBlock.
     """
-    # Offsets vectoriels stables
-    starts, n_params = _param_start_offsets(model)
-    device = next(model.parameters()).device
+    total_channels = 0
 
-    # Nombre total de "neurones" cachés (tous les canaux conv1)
-    n_hidden = _count_hidden_channels_resnet18(model)
-    print(f"Number of hidden neurons (conv1 channels): {n_hidden}")
-    print(f"Number of parameters: {n_params}")
-    B = torch.zeros((n_params, n_hidden), dtype=torch.int8, device=device)
+    # 1. Utilisation de la fonction générique pour itérer sur tous les BasicBlock
+    for name, block in iter_modules_by_type(model, BasicBlock):
 
-    col = 0  # curseur de colonne dans B
+        # 2. Le reste de votre logique reste la même
+        #    'block' est ici l'instance de BasicBlock
+        if hasattr(block, 'conv1') and isinstance(block.conv1, nn.Conv2d):
+            total_channels += block.conv1.out_channels
+        else:
+            # Sécurité si un bloc BasicBlock n'a pas l'attribut 'conv1'
+            print(f"Avertissement: Le bloc {name} ne possède pas l'attribut 'conv1' de type Conv2d.")
 
-    for block, lname, bi in _iter_basicblocks_resnet18(model):
-        conv1, bn1, conv2 = block.conv1, block.bn1, block.conv2
-
-        # Sanity checks usuels
-        assert isinstance(conv1, nn.Conv2d) and isinstance(conv2, nn.Conv2d)
-        assert isinstance(bn1, nn.BatchNorm2d)
-        assert conv2.in_channels == conv1.out_channels, \
-            f"Mismatch in {lname}[{bi}]: conv2.in_channels != conv1.out_channels"
-
-        o = conv1.out_channels
-        i = conv1.in_channels
-        kH, kW = conv1.kernel_size
-
-        # ---- (1) conv1.weight : -1 sur tous les noyaux du canal k ----
-        w1 = conv1.weight  # [o, i, kH, kW]
-        w1_start, _ = starts[id(w1)]
-        # Bloc de B correspondant à toute la (flatten) de conv1.weight
-        block_in = B[w1_start : w1_start + o*i*kH*kW, col : col + o]  # shape = (o*i*kH*kW, o)
-
-        # Motif: pour chaque colonne k, on met -1 sur le "plan" w1[k, :, :, :]
-        # Construisons un tenseur (o, i, kH, kW, o) avec -1 sur [:, :, :, :, diag]
-        T = torch.zeros((o, i, kH, kW, o), dtype=torch.int8, device=device)
-        idx = torch.arange(o, device=device)
-        T[idx, :, :, :, idx] = -1
-        block_in.copy_(T.view(o * i * kH * kW, o))
-
-        # ---- (2) bn1.weight & bn1.bias : -1 sur la diagonale ----
-        b1 = bn1.bias    # [o]
-        b1_start, _ = starts[id(b1)]
-
-        B[b1_start : b1_start + o, col : col + o].copy_(
-            -torch.eye(o, dtype=torch.int8, device=device)
-        )
-
-        # Si conv1 a un biais (rare dans ResNet), on le compte aussi comme "entrant"
-        if conv1.bias is not None:
-            cb = conv1.bias  # [o]
-            cb_start, _ = starts[id(cb)]
-            B[cb_start : cb_start + o, col : col + o].copy_(
-                -torch.eye(o, dtype=torch.int8, device=device)
-            )
-
-        # ---- (3) conv2.weight : +1 sur la colonne d'entrée k ----
-        w2 = conv2.weight  # [o2, o, kH2, kW2]  (o en dimension "in_channels")
-        o2, o_in, kH2, kW2 = w2.shape
-        assert o_in == o
-
-        w2_start, _ = starts[id(w2)]
-        block_out = B[w2_start : w2_start + o2*o*kH2*kW2, col : col + o]  # (o2*o*kH2*kW2, o)
-
-        T_out = torch.zeros((o2, o, kH2, kW2, o), dtype=torch.int8, device=device)
-        idx = torch.arange(o, device=device)
-        T_out[:, idx, :, :, idx] = 1
-        block_out.copy_(T_out.view(o2 * o * kH2 * kW2, o))
-        # Avancer le curseur (une colonne par canal)
-        col += o
-
-    return B
+    return total_channels
 
 
-
-def optimize_neuron_rescaling_polynomial_jitted_resnet(model, n_iter=10, tol=1e-6) -> torch.Tensor:
-    device = next(model.parameters()).device
-    dtype = torch.double
-    print("B computed")
-    diag_G = compute_diag_G(model).to(device=device, dtype=dtype)  # shape: [m], elementwise factor
-    print("diag_G computed")
-    B = compute_matrix_B_resnet18(model).to(device=device)
-    BZ, Z = update_z_polynomial_jit_resnet(diag_G, B, n_iter)
-    # free memory
-    del B
-    del diag_G
-    return BZ, Z
-
-@torch.jit.script
-def update_z_polynomial_jit_resnet(g, B, nb_iter: int, tol: float = 1e-6) -> tuple[torch.Tensor, torch.Tensor]:
-    z = torch.zeros(B.shape[1], dtype=torch.float64, device=B.device)
-    # Do one pass on every z_h
-    # Maintain BZ incrementally: BZ = B @ Z
-    BZ = torch.zeros(B.shape[0], dtype=z.dtype, device=z.device)
-
-    n_params_tensor = B.shape[0]
-    H = B.shape[1]
-
-    for k in range(nb_iter):
-        delta_total = 0.0
-        for h in range(H):
-            b_h = B[:, h]
-
-            mask_in_h = (b_h == -1)
-            mask_out_h = (b_h == 1)
-            mask_other_h = (b_h == 0)
-            card_in_h = mask_in_h.sum()
-            card_out_h = mask_out_h.sum()
-
-            # directly use precomputed card
-            A_h = int(card_in_h.item()) - int(card_out_h.item())
-
-            b_h = b_h.to(dtype=z.dtype)  # shape: [m]
-
-            # Leave-one-out energy vector
-            Y_h = BZ - b_h * z[h]
-            y_bar = Y_h.max()
-            E = torch.exp(Y_h - y_bar) * g
-
-            # sums using masks
-            B_h = (E * mask_out_h).sum()
-            C_h = (E * mask_in_h).sum()
-            D_h = (E * mask_other_h).sum()
-
-            # Polynomial coefficients
-            a = B_h * (A_h + n_params_tensor)
-            b = D_h * A_h
-            c = C_h * (A_h - n_params_tensor)
-
-            disc = b * b - 4.0 * a * c
-            sqrt_disc = torch.sqrt(disc)
-            x1 = (-b + sqrt_disc) / (2.0 * a)
-            x2 = (-b - sqrt_disc) / (2.0 * a)
-
-            z_new = torch.log(torch.maximum(x1, x2))
-
-            # Update Z[h] and incrementally refresh BZ
-            delta = z_new - z[h]
-            if delta != 0.0:
-                delta_total += abs(delta)
-                BZ = BZ + b_h * delta
-                z[h] = z_new
-        if delta_total < tol:
-            break
-    return BZ, z
-
-
-def reweight_model_resnet(model: nn.Module, BZ: torch.Tensor, Z: torch.Tensor) -> nn.Module:
+def reweight_model_cnn(model: nn.Module, BZ: torch.Tensor, Z: torch.Tensor) -> nn.Module:
     """
     Reweight a model according to a log-rescaling vector BZ.
 
@@ -324,7 +192,7 @@ def reweight_model_resnet(model: nn.Module, BZ: torch.Tensor, Z: torch.Tensor) -
     start_rmean = 0
 
     with torch.no_grad():
-        for block, lname, bi in _iter_basicblocks_resnet18(new_model):
+        for lname, block in iter_modules_by_type(model, BasicBlock):
             bn1 = block.bn1
             o = block.conv1.out_channels
             # running mean
@@ -347,36 +215,33 @@ def update_z_polynomial_jit_sparse(g, pos_cols: list[torch.Tensor], neg_cols: li
     n_params = g.shape[0]
     H = n_hidden    
     Z = torch.zeros(H, dtype=torch.float64, device=device)
-    BZ = torch.zeros(n_params, dtype=dtype, device=device) 
+    BZ = torch.zeros(n_params, dtype=dtype, device=device)
     for k in range(nb_iter):
         delta_total = 0.0
         for h in range(H):
             out_h, in_h = pos_cols[h], neg_cols[h]
 
-            mask_in = torch.zeros(n_params, dtype=torch.bool, device=device)
-            mask_out = torch.zeros(n_params, dtype=torch.bool, device=device)
-            mask_in[in_h] = True
-            mask_out[out_h] = True
-            remaining = torch.logical_not(torch.logical_or(mask_in, mask_out))
-            other_h = torch.nonzero(remaining).flatten()
-
-            # other_h = (~(mask_in | mask_out)).nonzero(as_tuple=True)[0]
+            # other_h = (~(mask_in | mask_out)).nonzero(as_tuple=True)[0] unused in jitted code
 
             card_in_h  = int(in_h.numel())
             card_out_h = int(out_h.numel())
 
-            bhzh = Z[h]*(mask_out.long()- mask_in.long())
-
+            Z_h = Z[h].item()
+      
+            # Y_h = BZ - bhzh  # O(n_params)
+            Y_h = BZ.clone() # O(n_params)
+            Y_h[out_h] = BZ[out_h] - Z_h
+            Y_h[in_h] = BZ[in_h] + Z_h
             
-            Y_h = BZ - bhzh  # shape: [m]
-            y_bar = Y_h.max()
-            E = torch.exp(Y_h - y_bar) * g  # shape: [m]
+            y_bar = Y_h.max() # O(n_params)
+            E = torch.exp(Y_h - y_bar) * g  # O(n_params)
 
             A_h = (card_in_h - card_out_h)
             B_h = E[out_h].sum()
             
             C_h = E[in_h].sum()
-            D_h = E[other_h].sum()
+            E_sum = E.sum()
+            D_h = E_sum - B_h - C_h # avoid computing other_h
 
             # Polynomial coefficients
             a = B_h * (A_h + n_params)
@@ -394,8 +259,8 @@ def update_z_polynomial_jit_sparse(g, pos_cols: list[torch.Tensor], neg_cols: li
             delta = z_new - Z[h]
             if delta != 0.0:
                 delta_total += abs(delta)
-                bh_delta = delta*(mask_out.long()- mask_in.long())
-                BZ = BZ + bh_delta
+                BZ[out_h] += delta
+                BZ[in_h] -= delta
                 Z[h] = z_new
         if delta_total < tol:
             break
@@ -405,12 +270,12 @@ def optimize_neuron_rescaling_polynomial_jitted_sparse(model, n_iter=10, tol=1e-
     device = next(model.parameters()).device
     dtype = torch.double
     diag_G = compute_diag_G(model).to(device=device, dtype=dtype)  # shape: [m], elementwise factor
-    pos_cols, neg_cols = compute_matrix_B_resnet18_sparse_fast(model)
-    n_hidden_neurons = _count_hidden_channels_resnet18(model)
+    pos_cols, neg_cols = compute_matrix_B_cnn_sparse(model)
+    n_hidden_neurons = count_hidden_channels_generic(model)
     BZ, Z = update_z_polynomial_jit_sparse(diag_G,pos_cols, neg_cols, n_iter, n_hidden_neurons, tol)
     return BZ, Z
 
-def compute_matrix_B_resnet18_sparse_fast(model: nn.Module):
+def compute_matrix_B_cnn_sparse(model: nn.Module):
     """
     Version sparse ultra-optimisée:
     Retourne pour chaque canal k de conv1 de chaque BasicBlock :
@@ -424,7 +289,7 @@ def compute_matrix_B_resnet18_sparse_fast(model: nn.Module):
     starts, n_params = _param_start_offsets(model)
     device = next(model.parameters()).device
 
-    n_hidden = _count_hidden_channels_resnet18(model)
+    n_hidden = count_hidden_channels_generic(model)
 
     # On stocke tous les +1 et -1 sous forme (rows, cols)
     pos_rows_all = []
@@ -434,7 +299,7 @@ def compute_matrix_B_resnet18_sparse_fast(model: nn.Module):
 
     col = 0  # colonne courante
 
-    for block, lname, bi in _iter_basicblocks_resnet18(model):
+    for lname, block in iter_modules_by_type(model, BasicBlock):
         conv1, bn1, conv2 = block.conv1, block.bn1, block.conv2
         o = conv1.out_channels
         i = conv1.in_channels
@@ -503,8 +368,6 @@ def compute_matrix_B_resnet18_sparse_fast(model: nn.Module):
     neg_rows_all = neg_rows_all[idx]
     pos_cols_all, idx = torch.sort(pos_cols_all) # trier les colonnes positives
     pos_rows_all = pos_rows_all[idx]
-
-
     pos_cols = split_sorted_by_column(pos_cols_all, pos_rows_all, n_hidden)
     neg_cols = split_sorted_by_column(neg_cols_all, neg_rows_all, n_hidden)
 

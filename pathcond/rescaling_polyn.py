@@ -780,7 +780,9 @@ def compute_sparse_B_fast(model: nn.Module):
     pos_cols_all = torch.cat(pos_cols_all)
     neg_rows_all = torch.cat(neg_rows_all)
     neg_cols_all = torch.cat(neg_cols_all)
-
+    neg_cols_all, idx = torch.sort(neg_cols_all) # trier les colonnes négatives
+    neg_rows_all = neg_rows_all[idx]
+    
     # Maintenant on sépare par colonne (H colonnes)
     # On veut : liste[t] = indices des rows où col == t
     # pos_rows_all, pos_cols_all sont déjà triés !
