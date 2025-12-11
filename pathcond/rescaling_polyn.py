@@ -570,74 +570,6 @@ def compute_G_matrix(model) -> torch.Tensor:
     return G
 
 
-@torch.jit.script
-def update_z_polynomial_jit(g, B, nb_iter: int, tol: float = 1e-6) -> torch.Tensor:
-    z = torch.zeros(B.shape[1], dtype=torch.float64, device=B.device)
-    # Do one pass on every z_h
-    # Maintain BZ incrementally: BZ = B @ Z
-    BZ = torch.zeros(B.shape[0], dtype=z.dtype, device=z.device)
-
-    n_params_tensor = B.shape[0]
-    H = B.shape[1]
-    # BZ = torch.zeros(n_params_tensor)
-
-    mask_in = (B == -1)
-    mask_out = (B == 1)
-    mask_other = (B == 0)
-    card_in = mask_in.sum(dim=0)   # [H]
-    card_out = mask_out.sum(dim=0)  # [H]
-
-    for k in range(nb_iter):
-        delta_total = 0.0
-        for h in range(H):
-            b_h = B[:, h]
-
-            # directly use precomputed card
-            A_h = int(card_in[h].item()) - int(card_out[h].item())
-
-            # Leave-one-out energy vector
-            Y_h = BZ - b_h * z[h]
-            y_bar = Y_h.max()
-            E = torch.exp(Y_h - y_bar) * g
-
-            # sums using masks
-            B_h = (E * mask_out[:, h]).sum()
-            C_h = (E * mask_in[:, h]).sum()
-            D_h = (E * mask_other[:, h]).sum()
-
-            # Polynomial coefficients
-            a = B_h * (A_h + n_params_tensor)
-            b = D_h * A_h
-            c = C_h * (A_h - n_params_tensor)
-
-            disc = b * b - 4.0 * a * c
-            sqrt_disc = torch.sqrt(disc)
-            x1 = (-b + sqrt_disc) / (2.0 * a)
-            x2 = (-b - sqrt_disc) / (2.0 * a)
-
-            z_new = torch.log(torch.maximum(x1, x2))
-
-            # Update Z[h] and incrementally refresh BZ
-            delta = z_new - z[h]
-            if delta != 0.0:
-                delta_total += abs(delta)
-                BZ = BZ + b_h * delta
-                z[h] = z_new
-        if delta_total < tol:
-            break
-    return BZ
-
-def optimize_neuron_rescaling_polynomial_jitted(model, n_iter=10, tol=1e-6) -> torch.Tensor:
-    device = next(model.parameters()).device
-    dtype = torch.double
-    linear_indices = [i for i, layer in enumerate(model.model) if isinstance(layer, nn.Linear)]
-    n_params = sum(p.numel() for p in model.parameters())
-    n_params_tensor = torch.tensor(n_params, dtype=dtype, device=device)
-    n_hidden_neurons = sum(model.model[i].out_features for i in linear_indices[:-1])
-    B = compute_matrix_B(model).to(device=device, dtype=dtype)     # shape: [m, n_hidden_neurons]
-    diag_G = compute_diag_G(model).to(device=device, dtype=dtype)  # shape: [m], elementwise factor
-    BZ = update_z_polynomial_jit(diag_G, B, n_iter)
-    return BZ
 
 
 @torch.jit.script
@@ -647,36 +579,33 @@ def update_z_polynomial_jit_sparse(g, pos_cols: list[torch.Tensor], neg_cols: li
     n_params = g.shape[0]
     H = n_hidden    
     Z = torch.zeros(H, dtype=torch.float64, device=device)
-    BZ = torch.zeros(n_params, dtype=dtype, device=device) 
+    BZ = torch.zeros(n_params, dtype=dtype, device=device)
     for k in range(nb_iter):
         delta_total = 0.0
         for h in range(H):
             out_h, in_h = pos_cols[h], neg_cols[h]
 
-            mask_in = torch.zeros(n_params, dtype=torch.bool, device=device)
-            mask_out = torch.zeros(n_params, dtype=torch.bool, device=device)
-            mask_in[in_h] = True
-            mask_out[out_h] = True
-            remaining = torch.logical_not(torch.logical_or(mask_in, mask_out))
-            other_h = torch.nonzero(remaining).flatten()
-
-            # other_h = (~(mask_in | mask_out)).nonzero(as_tuple=True)[0]
+            # other_h = (~(mask_in | mask_out)).nonzero(as_tuple=True)[0] unused in jitted code
 
             card_in_h  = int(in_h.numel())
             card_out_h = int(out_h.numel())
 
-            bhzh = Z[h]*(mask_out.long()- mask_in.long())
-
+            Z_h = Z[h].item()
+      
+            # Y_h = BZ - bhzh  # O(n_params)
+            Y_h = BZ.clone() # O(n_params)
+            Y_h[out_h] = BZ[out_h] - Z_h
+            Y_h[in_h] = BZ[in_h] + Z_h
             
-            Y_h = BZ - bhzh  # shape: [m]
-            y_bar = Y_h.max()
-            E = torch.exp(Y_h - y_bar) * g  # shape: [m]
+            y_bar = Y_h.max() # O(n_params)
+            E = torch.exp(Y_h - y_bar) * g  # O(n_params)
 
             A_h = (card_in_h - card_out_h)
             B_h = E[out_h].sum()
             
             C_h = E[in_h].sum()
-            D_h = E[other_h].sum()
+            E_sum = E.sum()
+            D_h = E_sum - B_h - C_h # avoid computing other_h
 
             # Polynomial coefficients
             a = B_h * (A_h + n_params)
@@ -694,8 +623,8 @@ def update_z_polynomial_jit_sparse(g, pos_cols: list[torch.Tensor], neg_cols: li
             delta = z_new - Z[h]
             if delta != 0.0:
                 delta_total += abs(delta)
-                bh_delta = delta*(mask_out.long()- mask_in.long())
-                BZ = BZ + bh_delta
+                BZ[out_h] += delta
+                BZ[in_h] -= delta
                 Z[h] = z_new
         if delta_total < tol:
             break
