@@ -4,7 +4,7 @@ import torch.nn as nn
 from tqdm import tqdm
 from torch.nn.utils import parameters_to_vector, vector_to_parameters
 from torchvision.models.resnet import BasicBlock
-from pathcond.utils import iter_modules_by_type, count_hidden_channels_generic
+from pathcond.utils import iter_modules_by_type, count_hidden_channels_generic, _detect_model_type
 from pathcond.network_to_optim import compute_diag_G, compute_B_mlp, compute_B_cnn
 
 
@@ -77,20 +77,18 @@ def update_z_polynomial(g, pos_cols: list[torch.Tensor], neg_cols: list[torch.Te
     return BZ, Z
 
 
-def optimize_neuron_rescaling_polynomial_jitted_sparse(model, n_iter=10, tol=1e-6) -> tuple[torch.Tensor, torch.Tensor]:
+def optimize_rescaling_polynomial(model, n_iter=10, tol=1e-6) -> tuple[torch.Tensor, torch.Tensor]:
     device = next(model.parameters()).device
     dtype = torch.double
     diag_G = compute_diag_G(model).to(device=device, dtype=dtype)  # shape: [m], elementwise factor
-    for n,m in model.named_modules():
-        if isinstance(m, nn.Linear):
-            pos_cols, neg_cols = compute_B_mlp(model)
-            linear_indices = [i for i, layer in enumerate(model.model) if isinstance(layer, nn.Linear)]
-            n_hidden_neurons = sum(model.model[i].out_features for i in linear_indices[:-1])
-        elif any(isinstance(m, t) for t in [nn.Conv2d, nn.Conv1d]):
-            pos_cols, neg_cols = compute_B_cnn(model)
-            n_hidden_neurons = count_hidden_channels_generic(model)
-        else:
-            raise ValueError("Model type not supported for polynomial rescaling.")
+    model_type = _detect_model_type(model)
+    if model_type == "MLP":
+        linear_indices = [i for i, layer in enumerate(model.model) if isinstance(layer, nn.Linear)]
+        n_hidden_neurons = sum(model.model[i].out_features for i in linear_indices[:-1])
+        pos_cols, neg_cols = compute_B_mlp(model)
+    elif model_type == "CNN":
+        n_hidden_neurons = count_hidden_channels_generic(model)
+        pos_cols, neg_cols = compute_B_cnn(model)
     BZ, Z = update_z_polynomial(diag_G, pos_cols, neg_cols, n_iter, n_hidden_neurons, tol)
     return BZ, Z
 

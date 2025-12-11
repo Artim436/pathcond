@@ -1,9 +1,89 @@
 import torch
 from torch import nn
-from typing import Optional, Callable, Dict
+from typing import Optional, Callable, Dict, Tuple, Union
 from pathlib import Path
 from torchvision.models.resnet import BasicBlock
 
+
+def get_model_input_size(
+    model: nn.Module, 
+    default_image_hw: Tuple[int, int] = (224, 224)
+) -> Union[Tuple[int, int], Tuple[int, int, int, int]]:
+    """
+    Determines the expected input size for a PyTorch model by inspecting its 
+    first layer.
+
+    This function handles common model types (MLP/Linear and CNN/Conv2d).
+    It assumes the sequential layer structure is accessible directly via 
+    the model's first child module.
+
+    Args:
+        model (nn.Module): The PyTorch model instance (e.g., the root model or 
+                           a Sequential block).
+        default_image_hw (Tuple[int, int]): The default (Height, Width) 
+                                            to assume for image-based models (CNNs). 
+                                            Commonly (224, 224) or (32, 32).
+
+    Returns:
+        Union[Tuple[int, int], Tuple[int, int, int, int]]: 
+            - (Batch_size, Features) for Linear/MLP models.
+            - (Batch_size, Channels, Height, Width) for Convolutional models.
+
+    Raises:
+        ValueError: If the model structure is unexpected or the first layer 
+                    type is not supported.
+    """
+    
+    # Attempt to retrieve the first layer from the model's children.
+    # This covers models where the structure is defined in a 'Sequential' block 
+    # or is the first named module (like a standard ResNet structure).
+    
+    # We use list(model.children())[0] to get the very first module 
+    # in the top-level definition.
+    try:
+        first_layer = list(model.children())[0]
+    except IndexError:
+        raise ValueError("Model has no child modules defined.")
+
+
+    # --- Case 1: MLP / Linear Model (Tabular or flattened data) ---
+    if isinstance(first_layer, nn.Linear):
+        # Format: (Batch_size, Features)
+        in_features = first_layer.in_features
+        # Batch size of 1 is assumed for size definition
+        return (1, in_features)
+    
+    # --- Case 2: CNN / Convolutional Model (Image data) ---
+    elif isinstance(first_layer, nn.Conv2d):
+        # Format: (Batch_size, Channels, Height, Width)
+        in_channels = first_layer.in_channels
+        H, W = default_image_hw 
+        
+        # Batch size of 1 is assumed for size definition
+        return (1, in_channels, H, W)
+    else:
+        raise ValueError(
+            f"Unsupported first layer type in model: {type(first_layer).__name__}. "
+            "Please manually specify the input size or adapt this function."
+        )
+
+
+def _detect_model_type(model: nn.Module) -> str:
+    """Détecte si le modèle est un MLP ou un CNN/ResNet."""
+    is_mlp = False
+    is_cnn = False
+    for module in model.modules():
+        if isinstance(module, nn.Linear):
+            is_mlp = True  
+        if isinstance(module, (nn.Conv2d, nn.Conv1d)):
+            is_cnn = True
+            break    
+    if is_cnn:
+        return "CNN"
+    elif is_mlp:
+        return "MLP"
+    else:
+        return "UNKNOWN"
 
 def count_hidden_channels_generic(model):
     """

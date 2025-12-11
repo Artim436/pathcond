@@ -15,7 +15,7 @@ def main():
     p.add_argument("--frac", type=float, default=1.0, help="Fraction of the dataset to use for training (between 0 and 1)")
     p.add_argument("--nb-lr", type=int, default=10, help="Number of learning rates to test for the rescaling analysis")
     args = p.parse_args()
-    LOSS, ACC_TRAIN, ACC_TEST = fit_with_telportation(
+    LOSS, ACC_TRAIN, ACC_TEST, TIME, EPOCHS = fit_with_telportation(
         epochs=args.epochs,
         ep_teleport=args.teleport_epoch,
         nb_iter_optim_rescaling=args.nb_iter_optim_rescaling,
@@ -26,6 +26,7 @@ def main():
     torch.save(LOSS, _ensure_outdir("results/resnet/") / "mnist_loss.pt")
     torch.save(ACC_TEST, _ensure_outdir("results/resnet/") / "mnist_acc_test.pt")
     torch.save(ACC_TRAIN, _ensure_outdir("results/resnet/") / "mnist_acc_train.pt")
-    
+    torch.save(TIME, _ensure_outdir("results/resnet/") / "mnist_time.pt")
+    torch.save(EPOCHS, _ensure_outdir("results/resnet/") / "mnist_epochs.pt")
 
     plot_main()

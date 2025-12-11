@@ -1,9 +1,11 @@
 import torch
 import torch.nn as nn
 from tqdm import tqdm
-from pathcond.utils import _param_start_offsets, split_sorted_by_column
+from pathcond.utils import _param_start_offsets, split_sorted_by_column, get_model_input_size
 from torchvision.models.resnet import BasicBlock
 from pathcond.utils import count_hidden_channels_generic, iter_modules_by_type
+
+
 
 
 def set_weights_for_path_norm(
@@ -70,7 +72,7 @@ def set_weights_for_path_norm(
     return orig_weights
 
 
-def grad_path_norm(model, input_size, device="cpu") -> torch.Tensor:
+def grad_path_norm(model, device="cpu") -> torch.Tensor:
     """
     Compute the gradient of the path-norm with respect to all parameters
     of the model.
@@ -80,7 +82,8 @@ def grad_path_norm(model, input_size, device="cpu") -> torch.Tensor:
         device (str, optional): Device to perform computations on.
         Defaults to "cpu".
     """
-    inputs = torch.ones(1, *input_size)  # Dummy input
+    input_size = get_model_input_size(model)
+    inputs = torch.ones(input_size, device=device)
     model.eval()
     inputs = inputs.to(device)
 

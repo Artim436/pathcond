@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from pathcond.models import MNISTMLP
 from pathcond.data import mnist_loaders
-from pathcond.rescaling_polyn import optimize_neuron_rescaling_polynomial, reweight_model
+from pathcond.rescaling_polyn import optimize_rescaling_polynomial, reweight_model
 from pathcond.plot import plot_rescaling_analysis
 from tqdm import tqdm
 

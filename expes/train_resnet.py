@@ -3,7 +3,7 @@ from typing import Tuple
 import torch
 import torch.nn as nn
 from pathcond.data import mnist_loaders, cifar10_loaders
-from pathcond.rescaling_polyn import optimize_neuron_rescaling_polynomial_jitted_sparse, reweight_model_cnn
+from pathcond.rescaling_polyn import optimize_rescaling_polynomial, reweight_model
 from tqdm import tqdm
 from pathcond.models import resnet18_mnist, resnet18_cifar10
 
@@ -89,6 +89,8 @@ def fit_with_telportation(
     ACC_TRAIN = torch.zeros((nb_lr, nb_iter, epochs, 2))  # sgd, ref_sgd
     LOSS = torch.zeros((nb_lr, nb_iter, epochs, 2))
     ACC_TEST = torch.zeros((nb_lr, nb_iter, epochs, 2))
+    TIME = torch.zeros((nb_lr, nb_iter, 1, 2))
+    EPOCHS = torch.zeros((nb_lr, nb_iter, 1, 2))
 
     # ep_teleport = [k*100 for k in range(epochs//100)]s
     print(torch.__version__)
@@ -110,96 +112,90 @@ def fit_with_telportation(
 
             criterion = nn.CrossEntropyLoss()
 
-            variants = {
-                "sgd": {
-                    "model": make_model(seed=it, device=device),
-                    "optimizer": None,  # défini juste après
-                    "trainer": torch.optim.SGD,
-                    "hist_loss": [],
-                    "hist_acc_tr": [],
-                    "hist_acc": [],
-                    "label": "sgd",
-                },
-                "ref_sgd": {
-                    "model": make_model(seed=it, device=device),
-                    "optimizer": None,
-                    "trainer": torch.optim.SGD,
-                    "hist_loss": [],
-                    "hist_acc_tr": [],
-                    "hist_acc": [],
-                    "label": "ref sgd",
-                }
-            }
-
-            # initialise les optimiseurs
-            for v in variants.values():
-                v["optimizer"] = v["trainer"](v["model"].parameters(), lr=lr)
-
             ep_teleport = [ep_teleport] if isinstance(ep_teleport, int) else ep_teleport
             if data == "mnist":
                 train_dl, test_dl = mnist_loaders(batch_size=128)
             else:  # cifar10
                 train_dl, test_dl = cifar10_loaders(batch_size=128)
 
+
+            # --- Baseline ---
+
+            model = make_model(seed=it, device=device)
+            optimizer = torch.optim.SGD(model.parameters(), lr=lr)
+
+            hist_acc_tr = []
+            hist_acc_te = []
+            hist_loss = []
+
             # --- boucle d'entraînement
+            start = time.time()
             for ep in range(epochs):
-                # évaluation
-                for key in ["sgd", "ref_sgd"]:
-                    v = variants[key]
-                    acc_tr = evaluate(v["model"], train_dl, device)
-                    v["hist_acc_tr"].append(acc_tr)
-                    acc = evaluate(v["model"], test_dl, device)
-                    v["hist_acc"].append(acc)
+                acc_tr = evaluate(model, train_dl, device)
+                hist_acc_tr.append(acc_tr)
+                acc = evaluate(model, test_dl, device)
+                hist_acc_te.append(acc)
+                train_loss = train_one_epoch(model, train_dl, criterion, optimizer, device, fraction=frac)
+                hist_loss.append(train_loss)
+                if acc >= 0.99:
+                    break
+            end = time.time()
+            
+            LOSS[lr_index, it, :, 1] = torch.tensor(hist_loss)
+            ACC_TRAIN[lr_index, it, :, 1] = torch.tensor(hist_acc_tr)
+            ACC_TEST[lr_index, it, :, 1] = torch.tensor(hist_acc_te)
 
-                # téléportation uniquement pour le modèle principal 'sgd'
+            TIME[lr_index, it, 0, 1] = end - start
+            EPOCHS[lr_index, it, 0, 1] = ep + 1
 
+            # --- Path-Cond SGD with Teleport ---
+
+            model = make_model(seed=it, device=device)
+            optimizer = torch.optim.SGD(model.parameters(), lr=lr)
+
+            hist_acc_tr = []
+            hist_acc_te = []
+            hist_loss = []
+
+            start = time.time()
+            for ep in range(epochs):
                 if ep in ep_teleport:
                     start_teleport = time.time()
-                    variants["sgd"]["model"] = rescaling_path_dynamics(
-                        variants["sgd"]["model"], verbose=False, soft=True, name="sgd", nb_iter=nb_iter_optim_rescaling, device=device, data=data
-                    )
+                    model = rescaling_path_dynamics(model, device=device, data=data)
                     end_teleport = time.time()
-                    print(f"Rescaling applied in {end_teleport - start_teleport:.2f} seconds.")
-                    variants["sgd"]["optimizer"] = torch.optim.SGD(
-                        variants["sgd"]["model"].parameters(), lr=lr
-                    )
+                acc_tr = evaluate(model, train_dl, device)
+                hist_acc_tr.append(acc_tr)
+                acc = evaluate(model, test_dl, device)
+                hist_acc_te.append(acc)
+                train_loss = train_one_epoch(model, train_dl, criterion, optimizer, device, fraction=frac)
+                hist_loss.append(train_loss) 
+                if acc >= 0.99:
+                    break
+            end = time.time()
 
-                # entraînement d'un epoch pour chaque variante
-                for key in ["sgd", "ref_sgd"]:
-                    v = variants[key]
-                    train_loss = train_one_epoch(v["model"], train_dl, criterion, v["optimizer"], device, fraction=frac)
-                    v["hist_loss"].append(train_loss)
+            print(f"Teleportation time: {end_teleport - start_teleport:.2f} seconds")
+                    
+            LOSS[lr_index, it, :, 0] = torch.tensor(hist_loss)
+            ACC_TRAIN[lr_index, it, :, 0] = torch.tensor(hist_acc_tr)
+            ACC_TEST[lr_index, it, :, 0] = torch.tensor(hist_acc_te)
 
-            # --- restitue EXACTEMENT les mêmes éléments et dans le même ordre
-            loss_history = variants["sgd"]["hist_loss"]
-            loss_history_ref = variants["ref_sgd"]["hist_loss"]
-            LOSS[lr_index, it, :, 0] = torch.tensor(loss_history)
-            LOSS[lr_index, it, :, 1] = torch.tensor(loss_history_ref)
-
-            acc_history_tr = variants["sgd"]["hist_acc_tr"]
-            acc_history_ref_tr = variants["ref_sgd"]["hist_acc_tr"]
-            ACC_TRAIN[lr_index, it, :, 0] = torch.tensor(acc_history_tr)
-            ACC_TRAIN[lr_index, it, :, 1] = torch.tensor(acc_history_ref_tr)
-
-            acc_history = variants["sgd"]["hist_acc"]
-            acc_history_ref = variants["ref_sgd"]["hist_acc"]
-            ACC_TEST[lr_index, it, :, 0] = torch.tensor(acc_history)
-            ACC_TEST[lr_index, it, :, 1] = torch.tensor(acc_history_ref)
+            TIME[lr_index, it, 0, 0] = end - start
+            EPOCHS[lr_index, it, 0, 0] = ep + 1
 
     return (
-        LOSS, ACC_TRAIN, ACC_TEST
+        LOSS, ACC_TRAIN, ACC_TEST, TIME, EPOCHS
     )
 
 
-def rescaling_path_dynamics(model, verbose: bool = False, soft: bool = True, nb_iter=1, name: str = "sgd", device="cpu", data="mnist"):
+def rescaling_path_dynamics(model, device="cpu", data="mnist"):
     """Test de validation de la fonctionnalité de rescaling par neurone."""
 
     if data == "mnist":
         inputs = torch.randn(16, 1, 28, 28).to(device)
     else:
         inputs = torch.randn(16, 3, 32, 32).to(device)
-    BZ_opt, Z_opt = optimize_neuron_rescaling_polynomial_jitted_sparse(model, n_iter=1, tol=1e-6)
-    final_model = reweight_model_cnn(model, BZ_opt, Z_opt).to(dtype=torch.float32, device=device)
+    BZ_opt, Z_opt = optimize_rescaling_polynomial(model, n_iter=1, tol=1e-6)
+    final_model = reweight_model(model, BZ_opt, Z_opt).to(dtype=torch.float32, device=device)
     final_model = final_model.to(device).eval()
     model.eval()
 

@@ -41,14 +41,6 @@ class MNISTMLP(nn.Module):
             else:
                 x = layer(x)
         return x
-    
-    def init_normal(self, mean=0.0, std=0.02, seed=0):
-        torch.manual_seed(seed)
-        for m in self.model.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.normal_(m.weight, mean=mean, std=std)
-                if m.bias is not None:
-                    nn.init.zeros_(m.bias)
 
 class Moons_MLP(nn.Module):
     """MLP for two moons (2 -> 32 -> 32 -> 1)."""
