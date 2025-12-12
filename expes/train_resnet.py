@@ -148,6 +148,9 @@ def fit_with_telportation(
             TIME[lr_index, it, 0, 1] = end - start
             EPOCHS[lr_index, it, 0, 1] = ep + 1
 
+            print(f"Finished lr_index={lr_index}, it={it}.")
+            print(f" Baseline : Final train acc: {hist_acc_tr[-1]:.4f}, test acc: {hist_acc_te[-1]:.4f}, loss: {hist_loss[-1]:.4f}, epochs: {ep+1}, total time: {end - start:.2f} seconds.")
+
             # --- Path-Cond SGD with Teleport ---
 
             model = make_model(seed=it, device=device)
@@ -163,6 +166,7 @@ def fit_with_telportation(
                     start_teleport = time.time()
                     model = rescaling_path_dynamics(model, device=device, data=data)
                     end_teleport = time.time()
+                    optimizer = torch.optim.SGD(model.parameters(), lr=lr) # tres important
                 acc_tr = evaluate(model, train_dl, device)
                 hist_acc_tr.append(acc_tr)
                 acc = evaluate(model, test_dl, device)
@@ -173,7 +177,12 @@ def fit_with_telportation(
                     break
             end = time.time()
 
+            
+
+            
             print(f"Teleportation time: {end_teleport - start_teleport:.2f} seconds")
+            print(f" PathCond : Final train acc: {hist_acc_tr[-1]:.4f}, test acc: {hist_acc_te[-1]:.4f}, loss: {hist_loss[-1]:.4f}, epochs: {ep+1}, total time: {end - start:.2f} seconds.")
+            print("-----------------------------------------------------")
                     
             LOSS[lr_index, it, :, 0] = torch.tensor(hist_loss)
             ACC_TRAIN[lr_index, it, :, 0] = torch.tensor(hist_acc_tr)

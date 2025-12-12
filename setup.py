@@ -32,6 +32,7 @@ setup(
             "resnet-mnist-train = expes.cli_resnet:main",
             "resnet-mnist-plot-curves = expes.cli_plot_resnet:main",
             "plot-mnist-resnet = expes.cli_plot_resnet:main",
+            "resnet-cifar-train = expes.cli_resnet_cifar:main",
         ],
     },
 )
