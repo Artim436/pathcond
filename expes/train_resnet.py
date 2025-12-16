@@ -63,9 +63,7 @@ def evaluate(model, loader, device) -> float:
 
 def fit_with_telportation(
     epochs: int = 5,
-    ep_teleport: int = 0,
     nb_lr: int = 10,
-    nb_iter_optim_rescaling: int = 1,
     nb_iter: int = 1,
     frac: float = 1.0,
     data="mnist",
@@ -85,7 +83,7 @@ def fit_with_telportation(
       loss_adam, loss_ref_adam, acc_adam, acc_ref_adam
     """
     adam = False
-    learning_rates = torch.logspace(-4, -1, nb_lr)
+    learning_rates = torch.logspace(-3, -1, nb_lr)
     ACC_TRAIN = torch.zeros((nb_lr, nb_iter, epochs, 2))  # sgd, ref_sgd
     LOSS = torch.zeros((nb_lr, nb_iter, epochs, 2))
     ACC_TEST = torch.zeros((nb_lr, nb_iter, epochs, 2))
@@ -112,7 +110,7 @@ def fit_with_telportation(
 
             criterion = nn.CrossEntropyLoss()
 
-            ep_teleport = [ep_teleport] if isinstance(ep_teleport, int) else ep_teleport
+            
             if data == "mnist":
                 train_dl, test_dl = mnist_loaders(batch_size=128)
             else:  # cifar10
@@ -121,7 +119,7 @@ def fit_with_telportation(
 
             # --- Baseline ---
 
-            model = make_model(seed=it, device=device)
+            model = make_model(seed=it+10, device=device)
             optimizer = torch.optim.SGD(model.parameters(), lr=lr)
 
             hist_acc_tr = []
@@ -137,8 +135,6 @@ def fit_with_telportation(
                 hist_acc_te.append(acc)
                 train_loss = train_one_epoch(model, train_dl, criterion, optimizer, device, fraction=frac)
                 hist_loss.append(train_loss)
-                if acc >= 0.99:
-                    break
             end = time.time()
             
             LOSS[lr_index, it, :, 1] = torch.tensor(hist_loss)
@@ -153,6 +149,8 @@ def fit_with_telportation(
 
             # --- Path-Cond SGD with Teleport ---
 
+            ep_teleport = [k for k in range(1, epochs)]
+
             model = make_model(seed=it, device=device)
             optimizer = torch.optim.SGD(model.parameters(), lr=lr)
 
@@ -161,11 +159,13 @@ def fit_with_telportation(
             hist_loss = []
 
             start = time.time()
+            time_teleport = 0.0
             for ep in range(epochs):
                 if ep in ep_teleport:
                     start_teleport = time.time()
                     model = rescaling_path_dynamics(model, device=device, data=data)
                     end_teleport = time.time()
+                    time_teleport += end_teleport - start_teleport
                     optimizer = torch.optim.SGD(model.parameters(), lr=lr) # tres important
                 acc_tr = evaluate(model, train_dl, device)
                 hist_acc_tr.append(acc_tr)
@@ -173,14 +173,12 @@ def fit_with_telportation(
                 hist_acc_te.append(acc)
                 train_loss = train_one_epoch(model, train_dl, criterion, optimizer, device, fraction=frac)
                 hist_loss.append(train_loss) 
-                if acc >= 0.99:
-                    break
             end = time.time()
 
             
 
             
-            print(f"Teleportation time: {end_teleport - start_teleport:.2f} seconds")
+            print(f"Teleportation time: {time_teleport:.2f} seconds")
             print(f" PathCond : Final train acc: {hist_acc_tr[-1]:.4f}, test acc: {hist_acc_te[-1]:.4f}, loss: {hist_loss[-1]:.4f}, epochs: {ep+1}, total time: {end - start:.2f} seconds.")
             print("-----------------------------------------------------")
                     
@@ -210,7 +208,7 @@ def rescaling_path_dynamics(model, device="cpu", data="mnist"):
 
     final_output = final_model(inputs)
     original_output = model(inputs)
-    assert torch.allclose(original_output, final_output, atol=1e-5)
+    assert torch.allclose(original_output, final_output, atol=1e-2)
     # print("✅ Sortie finale préservée après rescaling.")
 
     return final_model

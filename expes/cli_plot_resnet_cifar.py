@@ -22,10 +22,8 @@ def main():
 
     EPOCHS = torch.load(_ensure_outdir("results/resnet/cifar10/") / "epochs.pt")
 
-    learning_rates = torch.logspace(-4, -1, LOSS.shape[0]).tolist()
+    learning_rates = torch.logspace(-3, -1, LOSS.shape[0]).tolist()
 
-
-    learning_rates_trunc = learning_rates[-4:]
 
     save_path = plot_mean_var_curves_triptych(
     LOSS=LOSS,

@@ -44,6 +44,13 @@ def get_model_input_size(
         first_layer = list(model.children())[0]
     except IndexError:
         raise ValueError("Model has no child modules defined.")
+    
+    try:
+        # If the first layer is a Sequential, get its first layer
+        if isinstance(first_layer, nn.Sequential):
+            first_layer = list(first_layer.children())[0]
+    except IndexError:
+        raise ValueError("The first child module is a Sequential with no layers.")
 
 
     # --- Case 1: MLP / Linear Model (Tabular or flattened data) ---

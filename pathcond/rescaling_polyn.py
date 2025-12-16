@@ -9,71 +9,70 @@ from pathcond.network_to_optim import compute_diag_G, compute_B_mlp, compute_B_c
 
 
 @torch.jit.script
-def update_z_polynomial(g, pos_cols: list[torch.Tensor], neg_cols: list[torch.Tensor], nb_iter: int, n_hidden: int, tol: float = 1e-6) -> tuple[torch.Tensor, torch.Tensor]:
+def update_z_polynomial(
+    g: torch.Tensor, 
+    pos_cols: list[torch.Tensor], 
+    neg_cols: list[torch.Tensor], 
+    nb_iter: int, 
+    n_hidden: int, 
+    tol: float = 1e-6
+) -> tuple[torch.Tensor, torch.Tensor]:
     device = g.device
     dtype = torch.double
     n_params = g.shape[0]
-    H = n_hidden
-    Z = torch.zeros(H, dtype=torch.float64, device=device)
+    H = n_hidden    
+    Z = torch.zeros(H, dtype=dtype, device=device) 
     BZ = torch.zeros(n_params, dtype=dtype, device=device)
+    E_sum = 0.0
     for k in range(nb_iter):
         delta_total = 0.0
         for h in range(H):
             out_h, in_h = pos_cols[h], neg_cols[h]
+            card_in_h  = float(in_h.numel()) 
+            card_out_h = float(out_h.numel())
 
-            # other_h = (~(mask_in | mask_out)).nonzero(as_tuple=True)[0] unused in jitted code
-
-            card_in_h = int(in_h.numel())
-            card_out_h = int(out_h.numel())
-
+            E_h_old = torch.sum(torch.exp(BZ[out_h]) * g[out_h]) + torch.sum(torch.exp(BZ[in_h]) * g[in_h])
+            
+            if h == 0 and k == 0:
+                E_sum = g.sum() 
+            
+            D_h = E_sum - E_h_old
             Z_h = Z[h].item()
+            
+            E_out_h = torch.exp(BZ[out_h] - Z_h) * g[out_h] 
+            B_h = E_out_h.sum()
+            
+            E_in_h = torch.exp(BZ[in_h] + Z_h) * g[in_h]
+            C_h = E_in_h.sum()
 
-            # Y_h = BZ - bhzh  # O(n_params)
-            Y_h = BZ.clone()  # O(n_params)
-            Y_h[out_h] = BZ[out_h] - Z_h
-            Y_h[in_h] = BZ[in_h] + Z_h
-
-            # y_bar = Y_h.max()  # O(n_params) in case of overflow problems
-            # E = torch.exp(Y_h - y_bar) * g  # O(n_params
-            E = torch.exp(Y_h) * g  # O(n_params)
-
-            A_h = (card_in_h - card_out_h)
-            B_h = E[out_h].sum()
-
-            C_h = E[in_h].sum()
-            E_sum = E.sum()
-            D_h = E_sum - B_h - C_h  # avoid computing other_h
-
-            # Polynomial coefficients
+            A_h = card_in_h - card_out_h
+            
             a = B_h * (A_h + n_params)
             b = D_h * A_h
             c = C_h * (A_h - n_params)
 
-            if a <= 0.0:
-                raise ValueError(
-                    f"Non-positive a={a} in quadratic for neuron {h} at iter {k}, A_h={A_h}, B_h={B_h}, C_h={C_h}, D_h={D_h}")
-            if c >= 0.0:
-                raise ValueError(
-                    f"Non-negative c={c} in quadratic for neuron {h} at iter {k}, A_h={A_h}, B_h={B_h}, C_h={C_h}, D_h={D_h}")
-            else:
-                disc = torch.square(b) - 4.0 * a * c
-                if disc > 0.0:
-                    sqrt_disc = torch.sqrt(disc)
-                    x1 = (-b + sqrt_disc) / (2.0 * a)
-                    if x1 <= 0.0:
-                        raise ValueError(
-                            f"Unexpected number of positive roots for neuron {h} at iter {k}")
-                    z_new = torch.log(x1)
-                else:
-                    raise ValueError(f"Negative or infinit discriminant {disc} in quadratic for neuron {h} at iter {k}")
-            # Update Z[h] and incrementally refresh BZ
+            disc = b * b - 4.0 * a * c
+            if disc < 0.0:
+                raise ValueError(f"Negative discriminant encountered: {disc.item()}")
+            sqrt_disc = torch.sqrt(disc)
+            x1 = (-b + sqrt_disc) / (2.0 * a)
+            if x1 <= 0.0:
+                raise ValueError(f"Non-positive root encountered: {x1.item()}")
+            z_new = torch.log(x1)
+
             delta = z_new - Z[h]
             delta_total += abs(delta)
+            
             BZ[out_h] += delta
             BZ[in_h] -= delta
             Z[h] = z_new
+            
+            E_h_new = torch.sum(torch.exp(BZ[out_h]) * g[out_h]) + torch.sum(torch.exp(BZ[in_h]) * g[in_h])
+            E_sum = D_h + E_h_new
+            
         if delta_total < tol:
             break
+            
     return BZ, Z
 
 

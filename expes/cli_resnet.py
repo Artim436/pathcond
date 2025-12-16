@@ -9,16 +9,12 @@ from expes.cli_plot_resnet import main as plot_main
 def main():
     p = argparse.ArgumentParser(description="Train MNIST MLP")
     p.add_argument("--epochs", type=int, default=5)
-    p.add_argument("--teleport-epoch", type=int, default=0, help="Epoch to apply path rescaling")
-    p.add_argument("--nb-iter-optim-rescaling", type=int, default=1, help="Number of iterations for the path rescaling optimization")
     p.add_argument("--nb-iter", type=int, default=1, help="Number of repetitions of the whole experiment (for statistics)")
     p.add_argument("--frac", type=float, default=1.0, help="Fraction of the dataset to use for training (between 0 and 1)")
     p.add_argument("--nb-lr", type=int, default=10, help="Number of learning rates to test for the rescaling analysis")
     args = p.parse_args()
     LOSS, ACC_TRAIN, ACC_TEST, TIME, EPOCHS = fit_with_telportation(
         epochs=args.epochs,
-        ep_teleport=args.teleport_epoch,
-        nb_iter_optim_rescaling=args.nb_iter_optim_rescaling,
         nb_iter=args.nb_iter,
         frac=args.frac, data="mnist",
         nb_lr = args.nb_lr,
