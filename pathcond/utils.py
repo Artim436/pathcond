@@ -5,74 +5,67 @@ from pathlib import Path
 from torchvision.models.resnet import BasicBlock
 
 
+from typing import Tuple, Union
+import torch.nn as nn
+
+
+class DoubleConv(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x)
+    
+
+def _get_first_parametric_layer(module: nn.Module) -> nn.Module:
+    """
+    Recursively finds the first Linear or Conv2d layer in a module.
+    """
+    for child in module.children():
+        if isinstance(child, (nn.Linear, nn.Conv2d)):
+            return child
+        # recurse
+        found = _get_first_parametric_layer(child)
+        if found is not None:
+            return found
+    return None
+
+
 def get_model_input_size(
     model: nn.Module, 
     default_image_hw: Tuple[int, int] = (224, 224)
 ) -> Union[Tuple[int, int], Tuple[int, int, int, int]]:
     """
-    Determines the expected input size for a PyTorch model by inspecting its 
-    first layer.
-
-    This function handles common model types (MLP/Linear and CNN/Conv2d).
-    It assumes the sequential layer structure is accessible directly via 
-    the model's first child module.
-
-    Args:
-        model (nn.Module): The PyTorch model instance (e.g., the root model or 
-                           a Sequential block).
-        default_image_hw (Tuple[int, int]): The default (Height, Width) 
-                                            to assume for image-based models (CNNs). 
-                                            Commonly (224, 224) or (32, 32).
-
-    Returns:
-        Union[Tuple[int, int], Tuple[int, int, int, int]]: 
-            - (Batch_size, Features) for Linear/MLP models.
-            - (Batch_size, Channels, Height, Width) for Convolutional models.
-
-    Raises:
-        ValueError: If the model structure is unexpected or the first layer 
-                    type is not supported.
+    Determines the expected input size for a PyTorch model by inspecting its
+    first parametric layer (Linear or Conv2d), recursively.
     """
-    
-    # Attempt to retrieve the first layer from the model's children.
-    # This covers models where the structure is defined in a 'Sequential' block 
-    # or is the first named module (like a standard ResNet structure).
-    
-    # We use list(model.children())[0] to get the very first module 
-    # in the top-level definition.
-    try:
-        first_layer = list(model.children())[0]
-    except IndexError:
-        raise ValueError("Model has no child modules defined.")
-    
-    try:
-        # If the first layer is a Sequential, get its first layer
-        if isinstance(first_layer, nn.Sequential):
-            first_layer = list(first_layer.children())[0]
-    except IndexError:
-        raise ValueError("The first child module is a Sequential with no layers.")
 
+    first_layer = _get_first_parametric_layer(model)
 
-    # --- Case 1: MLP / Linear Model (Tabular or flattened data) ---
+    if first_layer is None:
+        raise ValueError("Could not find a Linear or Conv2d layer in the model.")
+
+    # --- Case 1: MLP / Linear ---
     if isinstance(first_layer, nn.Linear):
-        # Format: (Batch_size, Features)
-        in_features = first_layer.in_features
-        # Batch size of 1 is assumed for size definition
-        return (1, in_features)
-    
-    # --- Case 2: CNN / Convolutional Model (Image data) ---
-    elif isinstance(first_layer, nn.Conv2d):
-        # Format: (Batch_size, Channels, Height, Width)
-        in_channels = first_layer.in_channels
-        H, W = default_image_hw 
-        
-        # Batch size of 1 is assumed for size definition
-        return (1, in_channels, H, W)
-    else:
-        raise ValueError(
-            f"Unsupported first layer type in model: {type(first_layer).__name__}. "
-            "Please manually specify the input size or adapt this function."
-        )
+        return (1, first_layer.in_features)
+
+    # --- Case 2: CNN / Conv2d ---
+    if isinstance(first_layer, nn.Conv2d):
+        H, W = default_image_hw
+        return (1, first_layer.in_channels, H, W)
+
+    # (Théoriquement inatteignable)
+    raise ValueError(
+        f"Unsupported layer type: {type(first_layer).__name__}"
+    )
 
 
 def _detect_model_type(model: nn.Module) -> str:
@@ -92,7 +85,7 @@ def _detect_model_type(model: nn.Module) -> str:
     else:
         return "UNKNOWN"
 
-def count_hidden_channels_generic(model):
+def count_hidden_channels_generic(model, module_type=None) -> int:
     """
     Compte les canaux de sortie (out_channels) de la première convolution
     de TOUS les BasicBlock trouvés dans un modèle.
@@ -101,7 +94,7 @@ def count_hidden_channels_generic(model):
     total_channels = 0
 
     # 1. Utilisation de la fonction générique pour itérer sur tous les BasicBlock
-    for name, block in iter_modules_by_type(model, BasicBlock):
+    for name, block in iter_modules_by_type(model, module_type or BasicBlock):
 
         # 2. Le reste de votre logique reste la même
         #    'block' est ici l'instance de BasicBlock
@@ -112,6 +105,7 @@ def count_hidden_channels_generic(model):
             print(f"Avertissement: Le bloc {name} ne possède pas l'attribut 'conv1' de type Conv2d.")
 
     return total_channels
+
 
 
 def iter_modules_by_type(model, module_type):
@@ -132,6 +126,24 @@ def iter_modules_by_type(model, module_type):
             # Évite d'itérer sur le modèle lui-même s'il est du type recherché
             if module is not model:
                 yield name, module
+
+
+def iter_cnn_blocks(model: nn.Module):
+    """
+    Yields tuples (conv1, bn1, conv2) for supported CNN blocks.
+    """
+    for m in model.modules():
+
+        # ResNet BasicBlock
+        if hasattr(m, "conv1") and hasattr(m, "bn1") and hasattr(m, "conv2"):
+            if isinstance(m.conv1, nn.Conv2d) and isinstance(m.conv2, nn.Conv2d):
+                yield m.conv1, m.bn1, m.conv2
+
+        # UNet DoubleConv
+        elif isinstance(m, DoubleConv):
+            conv1, bn1, _, conv2, _, _ = m.net
+            yield conv1, bn1, conv2
+
 
 
 def _ensure_outdir(outdir: str) -> Path:

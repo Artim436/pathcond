@@ -334,3 +334,125 @@ def resnet18_cifar10(num_classes=10, seed: int = 0) -> nn.Module:
     model.fc = nn.Linear(512, num_classes)
 
     return model
+
+
+# -----------------------------
+# Model: UNet
+# -----------------------------
+
+class DoubleConv(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.conv2(x)
+        x = self.bn2(x)
+        x = self.relu(x)
+        return x
+    
+
+class Down(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.MaxPool2d(2),
+            DoubleConv(in_channels, out_channels),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x)
+
+class Up(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int, bilinear: bool = True):
+        super().__init__()
+        if bilinear:
+            self.up = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=True)
+            self.conv = DoubleConv(in_channels, out_channels)
+        else:
+            self.up = nn.ConvTranspose2d(in_channels // 2, in_channels // 2, kernel_size=2, stride=2)
+            self.conv = DoubleConv(in_channels, out_channels)
+
+    def forward(self, x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
+        x1 = self.up(x1)
+        diffY = x2.size()[2] - x1.size()[2]
+        diffX = x2.size()[3] - x1.size()[3]
+        x1 = F.pad(x1, [diffX // 2, diffX - diffX // 2, diffY // 2, diffY - diffY // 2])
+        x = torch.cat([x2, x1], dim=1)
+        return self.conv(x)
+
+class OutConv(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int):
+        super().__init__()
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.conv(x)
+
+class UNet(nn.Module):
+    def __init__(self, in_channels: int = 3, out_channels: int = 3, base_c: int = 64, bilinear: bool = True):
+        super().__init__()
+        self.in_conv = DoubleConv(in_channels, base_c)
+        self.down1 = Down(base_c, base_c * 2)
+        self.down2 = Down(base_c * 2, base_c * 4)
+        self.down3 = Down(base_c * 4, base_c * 8)
+        factor = 2 if bilinear else 1
+        self.down4 = Down(base_c * 8, base_c * 16 // factor)
+
+        self.up1 = Up(base_c * 16, base_c * 8 // factor, bilinear)
+        self.up2 = Up(base_c * 8, base_c * 4 // factor, bilinear)
+        self.up3 = Up(base_c * 4, base_c * 2 // factor, bilinear)
+        self.up4 = Up(base_c * 2, base_c, bilinear)
+        self.out_conv = OutConv(base_c, out_channels)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x1 = self.in_conv(x)
+        x2 = self.down1(x1)
+        x3 = self.down2(x2)
+        x4 = self.down3(x3)
+        x5 = self.down4(x4)
+        x = self.up1(x5, x4)
+        x = self.up2(x, x3)
+        x = self.up3(x, x2)
+        x = self.up4(x, x1)
+        x = self.out_conv(x)
+        return torch.clamp(x, 0.0, 1.0)
+    
+    def squared_forward(self, x: torch.Tensor) -> torch.Tensor:
+        x1 = _doubleconv_forward_sq(x, self.in_conv)
+        x2 = _down_forward_sq(x1, self.down1)
+        x3 = _down_forward_sq(x2, self.down2)
+        x4 = _down_forward_sq(x3, self.down3)
+        x5 = _down_forward_sq(x4, self.down4)
+
+        x = _up_forward_sq(x5, x4, self.up1)
+        x = _up_forward_sq(x,  x3, self.up2)
+        x = _up_forward_sq(x,  x2, self.up3)
+        x = _up_forward_sq(x,  x1, self.up4)
+
+        x = _outconv_forward_sq(x, self.out_conv)
+        return torch.clamp(x, 0.0, 1.0)
+    
+    # UNet.squared_forward = squared_forward
+
+
+def grad_2(model, inputs):
+    def fct(model, inputs):
+        return model.squared_forward(inputs).sum()
+    grad2 = torch.autograd.grad(fct(model, inputs), model.parameters(), create_graph=True)
+    grad2 = [g.view(-1) for g in grad2]  # Aplatir les gradients
+    return torch.cat(grad2)  # Concaténer les gradients en un seul tenseur
+
+def grad(model, inputs):
+    def fct(model, inputs):
+        return model.forward(inputs).sum()
+    grad = torch.autograd.grad(fct(model, inputs), model.parameters())
+    grad = [g.view(-1) for g in grad]  # Aplatir les gradients
+    return torch.cat(grad)  # Concaténer les gradients en un seul tenseur
