@@ -16,6 +16,7 @@ moons-multi-lr --epochs 1000 --frac 1 --nb-lr 10  --teleport-epoch 0 --nb-iter-o
 ts-multi-lr --epochs 1000 --frac 1 --nb-init 5  --teleport-epoch 0 --nb-iter-optim-rescaling 15 --nb-iter 1
 resnet-mnist-train --epochs 10 --nb-lr 10 --teleport-epoch 0 --nb-iter-optim-rescaling 1 --nb-iter 1 --frac 1
 resnet-cifar-train --epochs 10 --nb-lr 10 --teleport-epoch 0 --nb-iter-optim-rescaling 1 --nb-iter 1 --frac 1
+python3 expes/u_net_denoising.py --epochs 1 --nb-lr 1 --nb-iter 1 --frac 0.1
 ```
 
 

@@ -48,3 +48,12 @@ class SyntheticDeblurDataset(Dataset):
         blurred_img = self.blur(img)
         blurry = self.to_tensor(blurred_img)
         return blurry, sharp
+    
+def get_deblur_loaders(batch_size: int = 128, num_workers: int = 2, seed: int = 0) -> Tuple[DataLoader, DataLoader]:
+    torch.manual_seed(seed)
+    train_set = SyntheticDeblurDataset(train=True, seed=seed)
+    test_set = SyntheticDeblurDataset(train=False, seed=seed)
+    train_dl = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    test_dl  = DataLoader(test_set,  batch_size=batch_size*2, shuffle=True, num_workers=num_workers)
+    return train_dl, test_dl
+    

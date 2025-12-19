@@ -301,7 +301,181 @@ def plot_mean_var_curves_all_lr(ACC=None,
 
     return save_path
 
+def plot_mean_var_curves_psnr(
+    LOSS=None,
+    ACC_TRAIN=None,
+    ACC_TEST=None,
+    learning_rates=None,
+    ep_teleport: int = None,        # ex: 1 ou None pour ne pas tracer
+    outdir: str = "images/",
+    fname: str = "curves_triptych.pdf",
+    show_panels=("loss", "train", "test"),  # 👈 nouveau paramètre
+):
+    """
+    Crée une figure unique avec 1 à 3 sous-graphiques (LOSS, ACC_TRAIN, ACC_TEST),
+    selon 'show_panels'. Colore les courbes via une colormap log(learning_rate),
+    et ajoute une colorbar commune.
 
+    Paramètres
+    ----------
+    show_panels : tuple ou str
+        Exemples :
+            - "loss" : n'affiche que la courbe de perte
+            - ("loss", "train") : affiche 2 panels
+            - ("loss", "train", "test") : les 3 (par défaut)
+    """
+
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import LogNorm, LinearSegmentedColormap
+    from matplotlib.cm import ScalarMappable
+    from matplotlib.lines import Line2D
+    from pathlib import Path
+
+    # ✅ Accepte show_panels="loss" au lieu de ("loss",)
+    if isinstance(show_panels, str):
+        show_panels = (show_panels,)
+
+    assert learning_rates is not None and len(learning_rates) > 0, "learning_rates requis"
+    if np.any(np.asarray(learning_rates) <= 0):
+        raise ValueError("learning_rates doivent être strictement positifs pour LogNorm.")
+
+    Path(outdir).mkdir(parents=True, exist_ok=True)
+    save_path = Path(outdir) / fname
+
+    # Style global
+    plt.rcParams.update({
+        "savefig.bbox": "tight",
+        "savefig.pad_inches": 0.02,
+        "pdf.fonttype": 42,
+        "ps.fonttype": 42,
+        "font.size": 10,
+        "axes.labelsize": 10,
+        "axes.titlesize": 10,
+        "legend.fontsize": 9,
+        "xtick.labelsize": 9,
+        "ytick.labelsize": 9,
+        "axes.grid": True,
+        "grid.alpha": 0.25,
+        "lines.linewidth": 1.8,
+        "lines.markersize": 3.0,
+    })
+
+    # --- Colormap log ---
+    cmap = plt.cm.plasma
+    colors = cmap(np.linspace(0, 0.85, 256))  # tronque avant le jaune
+    cmap = LinearSegmentedColormap.from_list("trunc_plasma", colors)
+    norm = LogNorm(vmin=float(np.min(learning_rates)), vmax=float(np.max(learning_rates)))
+
+    # --- Conversion torch → numpy ---
+    def _to_np(data):
+        if data is None:
+            return None
+        try:
+            import torch
+            if isinstance(data, torch.Tensor):
+                data = data.detach().cpu().numpy()
+        except Exception:
+            pass
+        data = np.asarray(data)
+        if data.ndim != 4 or data.shape[-1] not in (1, 2, 3, 4):
+            raise ValueError("Chaque data doit être de shape [nb_lr, nb_iter, epochs, C].")
+        return data
+
+    # --- Sélection dynamique des panels ---
+    panel_defs = {
+        "loss":  (LOSS,      "Training Loss",  "Loss"),
+        "train": (ACC_TRAIN, "Train PSNR", "PSNR"),
+        "test":  (ACC_TEST,  "Test PSNR",  "PSNR"),
+    }
+    selected_panels = [panel_defs[k] for k in show_panels if k in panel_defs]
+
+    if len(selected_panels) == 0:
+        raise ValueError(f"Aucun panel valide dans show_panels={show_panels}")
+
+    # --- Figure adaptée au nombre de panels ---
+    fig_width = 4.0 * len(selected_panels)
+    fig_height = 3.5
+    plt.rcParams["figure.figsize"] = (fig_width, fig_height)
+
+    fig, axes = plt.subplots(1, len(selected_panels), sharey=False)
+    if len(selected_panels) == 1:
+        axes = [axes]
+
+    # --- Légende une seule fois ---
+    legend_done = False
+
+    for ax, (data, title, ylab) in zip(axes, selected_panels):
+        data_np = _to_np(data)
+        if data_np is None:
+            ax.set_visible(False)
+            continue
+
+        nb_lr, nb_iter, epochs, C = data_np.shape
+        mean = np.nanmean(data_np, axis=1)
+        std  = np.nanstd(data_np, axis=1, ddof=0)
+        x = np.arange(0, epochs)
+
+        for lr_it, lr in enumerate(learning_rates):
+            for c in range(C):
+                y = mean[lr_it, :, c]
+                s = std[lr_it, :, c]
+                if (np.allclose(y, 0.0) and np.allclose(s, 0.0)) or np.all(~np.isfinite(y)):
+                    continue
+
+                linestyle = "-" if c % 2 == 0 else "--"
+                ax.plot(
+                    x, y,
+                    linestyle=linestyle,
+                    color=cmap(norm(lr))
+                )
+                ax.fill_between(x, y - s, y + s,
+                                alpha=0.2 if ylab != "PSNR" else 0.1,
+                                color=cmap(norm(lr)))
+
+        # Ligne de "teleport"
+        if ep_teleport is not None and 1 <= ep_teleport <= x[-1]:
+            ax.axvline(x=ep_teleport, linestyle="--", linewidth=1.2, color="black")
+
+        # Légende une seule fois
+        if not legend_done and title == "Training Loss":
+            style_legend = [
+                Line2D([0], [0], color='k', linestyle='--', label=r'NT Path Cond GD ($\mathbf{Ours}$)'),
+                Line2D([0], [0], color='k', linestyle='-', label='Baseline GD')
+            ]
+            ax.legend(handles=style_legend, loc="upper left", frameon=False)
+            legend_done = True
+
+        # ax.set_xscale("log")
+        ax.set_xlabel("Epoch")
+        ax.set_title(title)
+        ax.set_ylabel(ylab)
+
+    # --- Colorbar commune ---
+    sm = ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    vmin, vmax = np.min(learning_rates), np.max(learning_rates)
+    log_ticks = np.logspace(np.log10(vmin), np.log10(vmax), num=5)
+    cbar = fig.colorbar(
+        sm,
+        ax=[a for a in axes if a.get_visible()],
+        orientation="horizontal",
+        fraction=0.05,
+        pad=0.10,
+        aspect=30
+    )
+    cbar.set_label("Learning rate", fontsize=9)
+    cbar.ax.tick_params(labelsize=9)
+    cbar.set_ticks(log_ticks)
+    cbar.set_ticklabels([f"$10^{{{int(np.log10(t))}}}$" for t in log_ticks])
+
+    # --- Mise en page ---
+    # fig.suptitle("Scaling " , fontsize=12)
+    fig.subplots_adjust(bottom=0.3, wspace=0.3)
+
+    fig.savefig(save_path)
+    plt.close(fig)
+    return save_path
 
 def plot_mean_var_curves_triptych(
     LOSS=None,

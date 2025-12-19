@@ -6,6 +6,23 @@ from torchvision.models.resnet import BasicBlock
 from pathcond.utils import count_hidden_channels_generic, iter_modules_by_type
 
 
+class DoubleConv(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.conv2(x)
+        x = self.bn2(x)
+        x = self.relu(x)
+        return x
 
 
 def set_weights_for_path_norm(
@@ -269,7 +286,7 @@ def compute_B_mlp(model: nn.Module):
     return pos_cols, neg_cols
 
 
-def compute_B_cnn(model: nn.Module):
+def compute_B_cnn(model: nn.Module, module_type=None):
     """
     Version sparse ultra-optimisée:
     Retourne pour chaque canal k de conv1 de chaque BasicBlock :
@@ -283,7 +300,7 @@ def compute_B_cnn(model: nn.Module):
     starts, n_params = _param_start_offsets(model)
     device = next(model.parameters()).device
 
-    n_hidden = count_hidden_channels_generic(model)
+    n_hidden = count_hidden_channels_generic(model, module_type=module_type)
 
     # On stocke tous les +1 et -1 sous forme (rows, cols)
     pos_rows_all = []
@@ -293,8 +310,13 @@ def compute_B_cnn(model: nn.Module):
 
     col = 0  # colonne courante
 
-    for lname, block in iter_modules_by_type(model, BasicBlock):
-        conv1, bn1, conv2 = block.conv1, block.bn1, block.conv2
+    for lname, block in iter_modules_by_type(model, module_type or BasicBlock):
+        # if 'DoubleConv' object has no attribute 'bn1'
+        if not hasattr(block, 'bn1'):
+            conv1, conv2 = block.conv1, block.conv2
+            bn1 = None
+        else:
+            conv1, bn1, conv2 = block.conv1, block.bn1, block.conv2
         o = conv1.out_channels
         i = conv1.in_channels
         kH, kW = conv1.kernel_size
@@ -316,13 +338,14 @@ def compute_B_cnn(model: nn.Module):
         neg_cols_all.append(cols_in)
 
         # ----------- (2) bn1.bias -> -1 -----------
-        b1 = bn1.bias
-        b1_start, _ = starts[id(b1)]
-        rows_bn = torch.arange(b1_start, b1_start + o, device=device)
-        cols_bn = torch.arange(col, col + o, device=device)
+        if bn1 is not None:
+            b1 = bn1.bias
+            b1_start, _ = starts[id(b1)]
+            rows_bn = torch.arange(b1_start, b1_start + o, device=device)
+            cols_bn = torch.arange(col, col + o, device=device)
 
-        neg_rows_all.append(rows_bn)
-        neg_cols_all.append(cols_bn)
+            neg_rows_all.append(rows_bn)
+            neg_cols_all.append(cols_bn)
 
         # ----------- (3) conv1.bias si existe -----------
         if conv1.bias is not None:
@@ -366,3 +389,5 @@ def compute_B_cnn(model: nn.Module):
     neg_cols = split_sorted_by_column(neg_cols_all, neg_rows_all, n_hidden)
 
     return pos_cols, neg_cols
+
+

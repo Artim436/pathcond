@@ -76,7 +76,7 @@ def update_z_polynomial(
     return BZ, Z
 
 
-def optimize_rescaling_polynomial(model, n_iter=10, tol=1e-6) -> tuple[torch.Tensor, torch.Tensor]:
+def optimize_rescaling_polynomial(model, n_iter=10, tol=1e-6, module_type=None) -> tuple[torch.Tensor, torch.Tensor]:
     device = next(model.parameters()).device
     dtype = torch.double
     diag_G = compute_diag_G(model).to(device=device, dtype=dtype)  # shape: [m], elementwise factor
@@ -86,13 +86,20 @@ def optimize_rescaling_polynomial(model, n_iter=10, tol=1e-6) -> tuple[torch.Ten
         n_hidden_neurons = sum(model.model[i].out_features for i in linear_indices[:-1])
         pos_cols, neg_cols = compute_B_mlp(model)
     elif model_type == "CNN":
-        n_hidden_neurons = count_hidden_channels_generic(model)
-        pos_cols, neg_cols = compute_B_cnn(model)
+        n_hidden_neurons = count_hidden_channels_generic(model, module_type=module_type)
+        pos_cols, neg_cols = compute_B_cnn(model, module_type=module_type)
     BZ, Z = update_z_polynomial(diag_G, pos_cols, neg_cols, n_iter, n_hidden_neurons, tol)
+    large_value = 1e1
+    BZ = torch.where(torch.isinf(BZ), torch.full_like(BZ, large_value), BZ)
+    Z = torch.where(torch.isinf(Z), torch.full_like(Z, large_value), Z)
+    BZ = torch.where(torch.isnan(BZ), torch.zeros_like(BZ), BZ)
+    Z = torch.where(torch.isnan(Z), torch.zeros_like(Z), Z)
+    BZ = BZ.to(dtype=torch.float32)
+    Z = Z.to(dtype=torch.float32)
     return BZ, Z
 
 
-def reweight_model(model: nn.Module, BZ: torch.Tensor, Z: torch.Tensor = None) -> nn.Module:
+def reweight_model(model: nn.Module, BZ: torch.Tensor, Z: torch.Tensor = None, module_type=None) -> nn.Module:
     """
     Reweight a Pytorch model automatically.
     - Always rescales parameters using BZ.
@@ -129,7 +136,7 @@ def reweight_model(model: nn.Module, BZ: torch.Tensor, Z: torch.Tensor = None) -
     start_rmean = 0
 
     with torch.no_grad():
-        for _, block in iter_modules_by_type(new_model, BasicBlock):
+        for _, block in iter_modules_by_type(new_model, module_type or BasicBlock):
             bn1 = block.bn1
             o = block.conv1.out_channels
             # running mean
