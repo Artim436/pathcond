@@ -10,12 +10,12 @@ def run_grid_search():
         [16, 32, 64, 32, 16],
         [32, 64, 128, 64, 32],
     ]
-    learning_rates = list(np.logspace(-4, 1, 10))  # 0.0001 to 0.1
+    learning_rates = list(np.logspace(-4, 0, num=5))  # 1e-4 to 1e0
     methods = ["baseline", "pathcond", "enorm"]
     seeds = list(range(10))  # Seeds 0 to 9
     
     data = "moons"
-    epochs = 50
+    epochs = 10000
     optimizer = "sgd"
 
     total_runs = len(architectures) * len(learning_rates) * len(methods) * len(seeds)

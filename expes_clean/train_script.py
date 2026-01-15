@@ -9,142 +9,136 @@ import os
 from pathcond.models import resnet18_cifar10, resnet18_mnist, MLP, UNet
 from pathcond.data import moons_loaders, mnist_loaders, cifar10_loaders
 from enorm.enorm import ENorm
-from training_utils import train_one_epoch, evaluate, rescaling_path_cond
-
-
+from training_utils import (
+    train_one_epoch, evaluate, rescaling_path_cond, 
+    train_one_epoch_full_batch, evaluate_full_batch
+)
 
 def train_loop( 
-    architecture = [8, 8], # List[int] or resnet or Unet
-    method = "baseline", # baseline, pathcond, pathcond_telep_schedule, enorm, dag_enorm
-    learning_rate = 0.01, # float,
-    epochs = 1, # int
-    seed = 0, #int
+    architecture = [8, 8], 
+    method = "baseline", 
+    learning_rate = 0.01, 
+    epochs = 10000, 
+    seed = 0, 
     data = "moons",
-    optimizer = "sgd" # moons, mnist, fashion mnist, cifar10, cifar100, imagenet
+    optimizer = "sgd"
     ):
-    """
-    Train 4 variants of the same model:
-      - baseline SGD
-      - Pathcond SGD rescaling at init
-      - Pathcond rescaling every ... epochs
-      - Enorm SGD
-      - DAG Enorm
-    """
+    
+    # --- Configuration du Device ---
+    # Sur Moons (petit dataset), le CPU est souvent plus rapide car on évite la latence PCIe
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    
     # --- MLflow Configuration ---
     EXPERIMENT_NAME = f"PathCond_{data}_experiments"
     mlflow.set_experiment(EXPERIMENT_NAME)
+    # os.environ["MLFLOW_TRACKING_ASYNC"] = "true" # Mode asynchrone pour la vitesse
 
-    # Enable system metrics monitoring
-    mlflow.config.enable_system_metrics_logging()
-    mlflow.config.set_system_metrics_sampling_interval(1)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print("CUDA available:", torch.cuda.is_available())
-    
     torch.manual_seed(seed)
 
-    # Model selection
-    # Fix: use isinstance(architecture, list) to check type correctly
+    # --- Sélection du Modèle ---
     if isinstance(architecture, list):
         if data == "moons":
-            model = MLP([2] + architecture + [2], seed=seed)
+            model = MLP([2] + architecture + [2], seed=seed+123)
         elif data == "mnist":
-            model = MLP([28*28] + architecture + [10], seed=seed)
+            model = MLP([28*28] + architecture + [10], seed=seed+1234)
         elif data == "fashionmnist":
-            model = MLP([28*28] + architecture + [10], seed=seed)
-    elif (architecture == "resnet" or architecture == "resnet18") and data == "mnist":
-        model = resnet18_mnist(seed=seed)
-    elif (architecture == "resnet" or architecture == "resnet18") and data == "cifar10":
-        model = resnet18_cifar10(seed=seed)
+            model = MLP([28*28] + architecture + [10], seed=seed+1234)
+    elif architecture in ["resnet", "resnet18"]:
+        if data == "mnist": model = resnet18_mnist(seed=seed+1234)
+        elif data == "cifar10": model = resnet18_cifar10(seed=seed+1234)
     else:
         raise NotImplementedError("Architecture not implemented") 
 
     model.to(device)
     criterion = nn.CrossEntropyLoss()
 
-    # Optimizer selection
-    if optimizer == "sgd":
-        optim = torch.optim.SGD(model.parameters(), lr=learning_rate)
-    elif optimizer == "adam":
-        optim = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    else:
-        raise NotImplementedError("Optimizer not implemented")
-    
-    # Data Loading
+    # --- Chargement des Données ---
     if data == "moons":
-        train_dl, test_dl = moons_loaders(batch_size=128, seed=seed)
+        # On déplace les tenseurs sur le device UNE SEULE FOIS ici
+        X_train, X_test, y_train, y_test = moons_loaders(seed=seed)
+        X_train, X_test = X_train.to(device), X_test.to(device)
+        y_train, y_test = y_train.to(device), y_test.to(device)
     elif data == "mnist":
         train_dl, test_dl = mnist_loaders(batch_size=128, seed=seed)
     elif data == "cifar10":
         train_dl, test_dl = cifar10_loaders(batch_size=128, seed=seed)
-    else:
-        raise NotImplementedError("Data not implemented")
     
-    # Initial Rescaling Logic
+    # --- Initialisation de l'Optimiseur ---
+    def get_optimizer(model_params):
+        if optimizer == "sgd":
+            return torch.optim.SGD(model_params, lr=learning_rate)
+        elif optimizer == "adam":
+            return torch.optim.Adam(model_params, lr=learning_rate)
+        raise NotImplementedError()
+
+    optim = get_optimizer(model.parameters())
+    
+    # --- Rescaling Initial ---
     time_teleport_at_init = 0.0
-    if method == "pathcond":
+    if method in ["pathcond", "dag_enorm"]:
         start_init = time.time()
-        model = rescaling_path_cond(model, nb_iter_optim_rescaling=10, device=device, data=data, enorm=False)
-        optim = torch.optim.SGD(model.parameters(), lr=learning_rate)
-        time_teleport_at_init = time.time() - start_init
-    elif method == "dag_enorm":
-        start_init = time.time()
-        model = rescaling_path_cond(model, nb_iter_optim_rescaling=10, device=device, data=data, enorm=True)
-        optim = torch.optim.SGD(model.parameters(), lr=learning_rate)
+        is_enorm = (method == "dag_enorm")
+        model = rescaling_path_cond(model, nb_iter_optim_rescaling=10, device=device, data=data, enorm=is_enorm)
+        optim = get_optimizer(model.parameters())
         time_teleport_at_init = time.time() - start_init
     elif method == "enorm":
-        enorm = ENorm(model.named_parameters(), optim, c=1, model_type="linear")
+        enorm_obj = ENorm(model.named_parameters(), optim, c=1, model_type="linear")
     
     timer_method_during_training = 0.0
 
-    params = {
-        "architecture": str(architecture),
-        "method": method,
-        "learning_rate": learning_rate,
-        "epochs": epochs,
-        "seed": seed,
-        "data": data,
-        "optimizer": optimizer,
-    }
-
-    # Start MLflow Tracking
     with mlflow.start_run():
-        mlflow.log_params(params)
+        mlflow.log_params({"architecture": str(architecture), "method": method, "lr": learning_rate, "epochs": epochs, "data": data})
         mlflow.set_tag("mlflow.runName", f'{method}_{data}_{seed}_lr{learning_rate}')
 
         start_training_total = time.time()
         for epoch in range(epochs):
-            # Training phase
-            loss = train_one_epoch(model, train_dl, criterion, optim, device)
-            
-            # Evaluation phase
-            acc = evaluate(model, train_dl, device)
-            acc_test = evaluate(model, test_dl, device)
-            
-            # Method specific steps during training
+            # Training
+            if data == "moons":
+                model.train()
+                optim.zero_grad()
+                loss = criterion(model(X_train), y_train)
+                loss.backward()
+                optim.step()
+            else:
+                loss = train_one_epoch(model, train_dl, criterion, optim, device)
+
+            # Méthodes spécifiques (Schedule)
             if method == "enorm":
                 start_step = time.time()
-                enorm.step()
+                enorm_obj.step()
                 timer_method_during_training += time.time() - start_step
             elif method == "pathcond_telep_schedule":
                 start_step = time.time()
                 model = rescaling_path_cond(model, nb_iter_optim_rescaling=10, device=device, data=data, enorm=False)
-                optim = torch.optim.SGD(model.parameters(), lr=learning_rate)
+                optim = get_optimizer(model.parameters())
                 timer_method_during_training += time.time() - start_step
 
-            # Metrics logging
-            mlflow.log_metrics({
-                "train_loss": loss,
-                "train_acc": acc,
-                "test_acc": acc_test,
-                "cumulative_time": time.time() - start_training_total,
-                "init_teleport_time": time_teleport_at_init,
-                "training_method_overhead": timer_method_during_training
-            }, step=epoch)
+            # Metrics (tous les 50 epochs pour garder de la fluidité dans l'UI)
+            if epoch % 50 == 0 or epoch == epochs - 1:
+                if data == "moons":
+                    model.eval()
+                    pred = model(X_train).argmax(dim=1)
+                    acc = (pred == y_train).sum().item() / y_train.size(0)
+                    pred = model(X_test).argmax(dim=1)
+                    acc_test = (pred == y_test).sum().item() / y_test.size(0)
+                else:
+                    acc = evaluate(model, train_dl, device)
+                    acc_test = evaluate(model, test_dl, device)
+                
+                mlflow.log_metrics({
+                    "train_loss": loss,
+                    "train_acc": acc,
+                    "test_acc": acc_test,
+                    "overhead_time": timer_method_during_training,
+                    "teleport_time_init": time_teleport_at_init
+                }, step=epoch)
 
-        # Final logs
         mlflow.log_metric("total_time", time.time() - start_training_total)
-        mlflow.pytorch.log_model(model, name="model")
+        # Log du modèle uniquement à la fin
+        # mlflow.pytorch.log_model(model, name="model")
 
+        n_params = sum(p.numel() for p in model.parameters())
+        mlflow.log_param("n_params", n_params)
     return model
 
 if __name__ == "__main__":

@@ -30,12 +30,8 @@ def get_experiment_data(experiment_name, target_acc=0.90):
         epoch_reached = next((m.step for m in metrics_history if m.value >= target_acc), np.nan)
         
         # Nombre de paramètres
-        try:
-            model_uri = f"runs:/{run.info.run_id}/model"
-            model = mlflow.pytorch.load_model(model_uri)
-            n_params = count_parameters(model)
-        except:
-            continue
+        n_params = params.get("n_params")
+
 
         data_list.append({
             "method": params.get("method", "unknown"),
