@@ -8,7 +8,7 @@ import os
 
 from pathcond.models import resnet18_cifar10, resnet18_mnist, MLP, UNet
 from pathcond.data import moons_loaders, mnist_loaders, cifar10_loaders
-from expes.enorm import ENorm
+from enorm.enorm import ENorm
 from training_utils import train_one_epoch, evaluate, rescaling_path_cond
 
 

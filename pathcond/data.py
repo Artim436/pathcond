@@ -4,6 +4,8 @@ from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 import torch
 from torch.utils.data import Dataset
+from sklearn.model_selection import train_test_split
+from sklearn.datasets import make_moons
 
 
 def mnist_loaders(batch_size: int = 128, num_workers: int = 2, seed: int = 0) -> Tuple[DataLoader, DataLoader]:
@@ -29,6 +31,29 @@ def cifar10_loaders(batch_size: int = 128, num_workers: int = 2, seed: int = 0) 
     test_ds  = datasets.CIFAR10(root="./data", train=False, download=True, transform=tfm)
     train_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     test_dl  = DataLoader(test_ds,  batch_size=batch_size*2, shuffle=True, num_workers=num_workers)
+    return train_dl, test_dl
+
+def moons_loaders(batch_size: int = 128, num_workers: int = 2, seed: int = 0) -> Tuple[DataLoader, DataLoader]:
+    torch.manual_seed(seed)
+    X, y = make_moons(n_samples=1000, noise=0.1, random_state=seed)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=seed)
+
+    class MoonsDataset(Dataset):
+        def __init__(self, data, labels):
+            self.data = torch.tensor(data, dtype=torch.float32)
+            self.labels = torch.tensor(labels, dtype=torch.long)
+
+        def __len__(self):
+            return len(self.data)
+
+        def __getitem__(self, idx):
+            return self.data[idx], self.labels[idx]
+
+    train_ds = MoonsDataset(X_train, y_train)
+    test_ds = MoonsDataset(X_test, y_test)
+
+    train_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    test_dl = DataLoader(test_ds, batch_size=batch_size*2, shuffle=True, num_workers=num_workers)
     return train_dl, test_dl
 
 class SyntheticDeblurDataset(Dataset):
