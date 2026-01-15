@@ -223,7 +223,6 @@ class MLP(nn.Sequential):
             layers.append(nn.ReLU())
             prev = h
 
-        # Output layer: bias=False (comme dans ton code)
         layers.append(nn.Linear(prev, self.output_dim, bias=False))
 
         self.model = nn.Sequential(*layers)
