@@ -13,9 +13,12 @@ import numpy as np
 from matplotlib.lines import Line2D
 from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.gridspec as gridspec
+from matplotlib.patches import Patch
+from matplotlib.colors import LogNorm
+from matplotlib.ticker import LogLocator
 
 cmap = plt.cm.get_cmap('tab10')
-
+# cmap = plt.cm.get_cmap('viridis', 3+2)
 
 def get_theta(model_simple):
     # u,v,w = theta[0], theta[1], theta[2] 
@@ -23,6 +26,10 @@ def get_theta(model_simple):
     for name, param in model_simple.named_parameters():
         theta.append(param.data)
     return torch.Tensor(theta)[[2,0,1]]
+
+def get_phi(model_simple):
+    theta = get_theta(model_simple)
+    return torch.Tensor([theta[0]*theta[1], theta[0]*theta[2]])
 
 def print_params(model):
     for name, param in model.named_parameters():
@@ -34,6 +41,13 @@ def train_model(m, epochs, lr, X, Y):
     losses = []
     parameters = []
     phi = []
+    with torch.no_grad():
+        outputs = m(X)
+        loss = criterion(outputs, Y)
+        losses.append(loss.item())
+        theta = get_theta(m)
+        parameters.append(theta)
+        phi.append(get_phi(m))
     optimizer = optim.SGD(m.parameters(), lr=lr)
     for _ in range(epochs):
 
@@ -46,27 +60,184 @@ def train_model(m, epochs, lr, X, Y):
         losses.append(loss.item())
         theta = get_theta(m)
         parameters.append(theta)
-        phi.append(torch.Tensor([theta[0]*theta[1], theta[0]*theta[2]]))
+        phi.append(get_phi(m))
 
     return losses, parameters, phi
+
+
+def plot_trajectories(ax, traj, linestyle=None, color=None, s=20, label=None):
+
+    ax.plot(traj[:, 0], traj[:, 1], color=color, alpha=0.7, linewidth=2.5, linestyle=linestyle, zorder=3, label=label)
+    ax.scatter(traj[0, 0], traj[0, 1], color=color, s=s, alpha=0.9, zorder=4)          # debut
+    ax.scatter(traj[-1, 0], traj[-1, 1], color=color, s=s+50, alpha=0.9, marker='+', zorder=4)  # fin
+    
+    # mid_idx = 0  
+    # # if mid_idx < len(traj) - 1:
+    # dx = traj[mid_idx + 1, 0] - traj[mid_idx, 0]
+    # dy = traj[mid_idx + 1, 1] - traj[mid_idx, 1]
+    # ax.arrow(traj[mid_idx, 0], traj[mid_idx, 1], dx, dy,
+    #              head_width=0.02*torch.max(traj), head_length=0.02*torch.max(traj),
+    #              fc=color, ec=color, alpha=0.7, length_includes_head=True)
+
+def plot_theta_trajectories_3d(ax, traj, linestyle=None, color=None, s=20):
+    ax.plot(traj[:, 0], traj[:, 1], traj[:, 2],
+            color=color, linestyle=linestyle, linewidth=1.5, alpha=0.7)
+
+    ax.scatter(traj[0, 0], traj[0, 1], traj[0, 2],
+               color=color, s=s, alpha=0.9)              # start
+    ax.scatter(traj[-1, 0], traj[-1, 1], traj[-1, 2],
+               color=color, s=s+50, alpha=0.9, marker='+')  # end
+
+
+def loss_theta(theta, X, Y):
+    v, u, w = theta
+    y_pred = u * torch.relu(v * X + w)
+    return F.mse_loss(y_pred, Y).item()
+
+
+
+def plot_scaling_orbit(ax, u, v, w,
+                       lambda_min=0.1, lambda_max=5.0, n=200,
+                       color='black', linestyle=':', lw=2, label=None):
+    """
+    Plot lambda -> (u/lambda, lambda v, lambda w) in Theta space
+    """
+    lam = torch.linspace(lambda_min, lambda_max, n)
+
+    U = u / lam
+    V = v * lam
+    W = w * lam
+
+    ax.plot(U.numpy(), V.numpy(), W.numpy(),
+            color=color, linestyle=linestyle, 
+            linewidth=lw, alpha=0.5, label=label)
+
+def plot_loss_levelsets_phi(ax, 
+                            loss_phi,
+                            uv_range, 
+                            uw_range,
+                            n=100, 
+                            levels=10, 
+                            cmap="Greys", 
+                            zorder=None):
+    uv = torch.linspace(*uv_range, n)
+    uw = torch.linspace(*uw_range, n)
+    UV, UW = torch.meshgrid(uv, uw, indexing='ij')
+
+    L = torch.zeros_like(UV)
+    for i in range(n):
+        for j in range(n):
+            phi = torch.tensor([UV[i, j], UW[i, j]])
+            L[i, j] = loss_phi(phi, X, Y)
+
+    ax.contourf(
+        UV.numpy(), UW.numpy(), L.numpy(),
+        levels=levels,
+        cmap=cmap,
+        alpha=0.6,
+        linewidths=1.0, 
+        zorder=zorder
+    )
+
+
+def loss_phi(phi, X, Y):
+    u, v, w = phi_to_theta(phi)
+    y_pred = u * torch.relu(v * X + w)
+    return F.mse_loss(y_pred, Y).item()
+
+
+def plot_loss_levelsets_phi(ax, 
+                            loss_phi,
+                            uv_range, 
+                            uw_range,
+                            n=100, 
+                            levels=10, 
+                            cmap="Greys",
+                            alpha=0.8, 
+                            zorder=None, 
+                            log_scale=False):
+    uv = torch.linspace(*uv_range, n)
+    uw = torch.linspace(*uw_range, n)
+    UV, UW = torch.meshgrid(uv, uw, indexing='ij')
+
+    L = torch.zeros_like(UV)
+    for i in range(n):
+        for j in range(n):
+            phi = torch.tensor([UV[i, j], UW[i, j]])
+            L[i, j] = loss_phi(phi, X, Y)
+
+    if log_scale:
+        # Ensure no zero or negative values for log scale
+        L_safe = L.clone()
+        L_safe[L_safe <= 0] = 1e-12
+
+        # Create logarithmically spaced levels
+        log_min = L_safe.min().item()
+        log_max = L_safe.max().item()
+        levels = np.logspace(np.log10(log_min), np.log10(log_max), levels)
+        norm = LogNorm(vmin=log_min, vmax=log_max)
+    else:
+        norm = None
+
+
+    cf = ax.contourf(
+        UV.numpy(), UW.numpy(), L.numpy(),
+        levels=levels,
+        cmap=cmap,
+        alpha=alpha,
+        linewidths=1.0, 
+        zorder=zorder, 
+        norm=norm
+    )
+
+    return cf
+
+def phi_to_theta(phi):
+    a, b = phi
+    u = torch.ones((), device=phi.device, dtype=phi.dtype)
+    return u, a, b
+
+def ideal_gd_phi(phi0, X, Y, lr=1e-3, nepochs=100):
+    phi = phi0.clone().detach().requires_grad_(True)
+    all_phi = [phi.detach().clone()]
+
+    def loss_(theta):
+        u, v, w = theta
+        y_pred = u * torch.relu(v * X + w)
+        return F.mse_loss(y_pred, Y)
+
+    for _ in range(nepochs):
+        loss = loss_(phi_to_theta(phi))
+        loss.backward()
+
+        with torch.no_grad():
+            phi -= lr * phi.grad
+        phi.grad.zero_()
+
+        all_phi.append(phi.detach().clone())
+
+    return all_phi
+
 
 #%%
 model_simple = MLP(hidden_dims = [1, 1, 1]) # u rho(v x + w)
 
 
-n = 50
+n = 100
 epochs = 15000
-lr = 7e-3
+lr = 5e-3
 
 torch.manual_seed(36)
 X = torch.randn(n, 1)
 relu = nn.ReLU()
 Y = relu(X)
+lamd_orange = 1.0
 theta_opt = torch.Tensor([1.0, 1.0, 0.0]).to(torch.float)
 criterion = nn.MSELoss()
 all_init = [ # v, w, u
-    torch.Tensor([1.5, 0.5, 1.0]), #lr 7e-3, epochs 15000
-    torch.Tensor([3.0, 1.0, 4.0])
+    torch.Tensor([4.0, 3.0, 1.0]),
+    torch.Tensor([2.0*lamd_orange, 4.0*lamd_orange, 1.0/lamd_orange]),
+    torch.Tensor([4.0, -2.0, 1.0])
     ]
 
 
@@ -76,10 +247,16 @@ all_losses_rescaled = []
 all_phi = []
 all_phi_rescaled = []
 
+all_phi_ideal = []
+
 all_theta = []
 all_theta_rescaled =[]
 
 for i, init in enumerate(all_init):
+
+    phi0 = torch.Tensor([init[2]*init[0], init[2]*init[1]])# uv, uw
+    idel_phis = ideal_gd_phi(phi0, X, Y, lr=lr, nepochs=epochs)
+    all_phi_ideal.append(idel_phis)
     
     model = copy.deepcopy(model_simple)
     vector_to_parameters(init, model.parameters())
@@ -100,45 +277,26 @@ for i, init in enumerate(all_init):
 
 
 #%%
-def plot_trajectories(ax, traj, linestyle=None, color=None, s=20):
-
-    ax.plot(traj[:, 0], traj[:, 1], color=color, alpha=0.7, linewidth=1.5, linestyle=linestyle)
-    
-    ax.scatter(traj[0, 0], traj[0, 1], color=color, s=s, alpha=0.9)          # debut
-    ax.scatter(traj[-1, 0], traj[-1, 1], color=color, s=s+50, alpha=0.9, marker='+')  # fin
-    
-    # mid_idx = 0  
-    # # if mid_idx < len(traj) - 1:
-    # dx = traj[mid_idx + 1, 0] - traj[mid_idx, 0]
-    # dy = traj[mid_idx + 1, 1] - traj[mid_idx, 1]
-    # ax.arrow(traj[mid_idx, 0], traj[mid_idx, 1], dx, dy,
-    #              head_width=0.02*torch.max(traj), head_length=0.02*torch.max(traj),
-    #              fc=color, ec=color, alpha=0.7, length_includes_head=True)
-
-def plot_theta_trajectories_3d(ax, traj, linestyle=None, color=None, s=20):
-    ax.plot(traj[:, 0], traj[:, 1], traj[:, 2],
-            color=color, linestyle=linestyle, linewidth=1.5, alpha=0.7)
-
-    ax.scatter(traj[0, 0], traj[0, 1], traj[0, 2],
-               color=color, s=s, alpha=0.9)              # start
-    ax.scatter(traj[-1, 0], traj[-1, 1], traj[-1, 2],
-               color=color, s=s+50, alpha=0.9, marker='+')  # end
 
 
 fs=15 
-figsize=(8, 4) 
 s=20
 legend_lines = [
     Line2D([0], [0], linestyle='--', color='black',  label='Vanilla'),
     Line2D([0], [0], linestyle='-', color='black', label='Rescaled'),
 ]
+legend_lines_2 = [
+    # Line2D([0], [0], linestyle='--', color='black',  label='Vanilla'),
+    # Line2D([0], [0], linestyle='-', color='black', label='Rescaled'),
+    Line2D([0], [0], linestyle=':', color='black', label='GD in $\\Phi$'),
+]
 
-fig = plt.figure(figsize=(12, 3))
+fig = plt.figure(figsize=(17, 4))
 
 gs = gridspec.GridSpec(
     1, 3,
     width_ratios=[1, 1, 1],
-    wspace=0.25   # THIS works for 3D
+    wspace=0.3   # THIS works for 3D
 )
 
 ax0 = fig.add_subplot(gs[0])
@@ -153,22 +311,36 @@ for i, init in enumerate(all_init):
     ax0.plot(loss_rescaled, lw=2, linestyle='-', color=cmap(i))
     ax0.set_xlabel("Epochs", fontsize=fs)
     ax0.grid(alpha=0.5)
-    ax0.legend(handles=legend_lines, fontsize=fs)
+    ax0.legend(handles=legend_lines, fontsize=fs-1)
     ax0.set_yscale('log')
-    ax0.set_title('Loss during SGD',fontsize=fs+2)
+    ax0.set_title('Loss $L(\\theta)$ during SGD',fontsize=fs+2)
     ax0.tick_params(axis='both', which='major', labelsize=fs-1)
     ax0.tick_params(axis='both', which='minor', labelsize=fs-1)
     ax0.set_xscale('log')
 
+
     traj_rescaled = torch.stack(all_phi_rescaled[i])
     traj = torch.stack(all_phi[i])
+    traj_ideal = torch.stack(all_phi_ideal[i])
     plot_trajectories(ax1, traj, linestyle='--', color=cmap(i), s=s)
     plot_trajectories(ax1, traj_rescaled, linestyle='-', color=cmap(i), s=s)
+    plot_trajectories(ax1, traj_ideal, linestyle=':', color=cmap(i), s=s)
 
-    # axes[1].legend(fontsize=fs)
+    if i == 0:
+        ax1.scatter(theta_opt[0]*theta_opt[1], 
+                    theta_opt[0]*theta_opt[2], 
+                    label='$\\Phi(\\theta_{\\text{opt}})$', 
+                    color='black', 
+                    s=50, 
+                    marker='+',
+                    zorder=10)   
+        
+    ax1.legend(loc ='upper right', handles=legend_lines_2 , fontsize=fs-1)
     ax1.set_xlabel('$uv$', fontsize=fs)
     ax1.set_ylabel('$uw$', fontsize=fs)
     ax1.set_title('Trajectory in $\\Phi$ space',fontsize=fs+2)
+
+
 
     # θ trajectories (3D)
     traj_theta = torch.stack(all_theta[i])
@@ -177,7 +349,8 @@ for i, init in enumerate(all_init):
     plot_theta_trajectories_3d(ax2, traj_theta_rescaled, linestyle='-', color=cmap(i))
 
     if i == 0:
-        ax2.scatter(theta_opt[0], theta_opt[1], theta_opt[2], label='$\\theta^\\star$', 
+        ax2.scatter(theta_opt[0], theta_opt[1], theta_opt[2], 
+                    label='$\\theta_{\\text{opt}}$', 
                     color='black', s=50, marker='+')
     else:
         ax2.scatter(theta_opt[0], theta_opt[1], theta_opt[2], 
@@ -200,12 +373,58 @@ for i, init in enumerate(all_init):
     pos = ax2.get_position()
 
     ax2.set_position([
-        pos.x0 -0.01,  # ← shift left (adjust value)
+        pos.x0 -0.005,  # ← shift left (adjust value)
         pos.y0,
         pos.width,
         pos.height
     ])
-    ax2.legend(fontsize=fs)
+
+cf = plot_loss_levelsets_phi(
+    ax1,
+    loss_phi,
+    uv_range=(0, 4.5),
+    uw_range=(-3, 4.5),
+    # uv_range=(-50, 50),
+    # uw_range=(-50, 50),
+    levels=15,
+    cmap="Greys",
+    log_scale=True,
+    alpha=0.35,
+    zorder=-1,
+    n=250
+)
+
+
+# After creating the colorbar
+cbar = fig.colorbar(cf, ax=ax1, pad=0.02)
+cbar.set_label('Loss in $\\Phi$', fontsize=fs-4)
+cbar.ax.tick_params(labelsize=fs-2)
+
+# Set nice log ticks automatically
+cbar.locator = LogLocator(base=10.0)  # ticks at 10^n
+cbar.update_ticks()
+# ===== legend entry (proxy artist) =====
+# loss_patch = Patch(facecolor='lightgray', edgecolor='black', label='Loss level sets')
+
+# ax1.legend(
+#     handles= legend_lines,
+#     fontsize=fs,
+#     loc='upper right'
+# )
+
+u0, v0, w0 = theta_opt.tolist()   # or any fixed (u,v,w)
+
+plot_scaling_orbit(
+    ax2,
+    u=u0, v=v0, w=w0,
+    lambda_min=0.45,
+    lambda_max=6,
+    color='grey',
+    linestyle='-',
+    label='$\\theta \\sim \\theta_{\\text{opt}}$'
+)
+ax2.legend(loc='upper left', fontsize=fs-2, bbox_to_anchor=(-0.2, 1.0))
+ax2.view_init(elev=15, azim=60)
 
 plt.tight_layout()
 plt.show()
