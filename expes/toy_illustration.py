@@ -16,6 +16,7 @@ import matplotlib.gridspec as gridspec
 from matplotlib.patches import Patch
 from matplotlib.colors import LogNorm
 from matplotlib.ticker import LogLocator
+from matplotlib.patches import FancyArrowPatch
 
 cmap = plt.cm.get_cmap('tab10')
 # cmap = plt.cm.get_cmap('viridis', 3+2)
@@ -65,28 +66,6 @@ def train_model(m, epochs, lr, X, Y):
     return losses, parameters, phi
 
 
-def plot_trajectories(ax, traj, linestyle=None, color=None, s=20, label=None):
-
-    ax.plot(traj[:, 0], traj[:, 1], color=color, alpha=0.7, linewidth=2.5, linestyle=linestyle, zorder=3, label=label)
-    ax.scatter(traj[0, 0], traj[0, 1], color=color, s=s, alpha=0.9, zorder=4)          # debut
-    ax.scatter(traj[-1, 0], traj[-1, 1], color=color, s=s+50, alpha=0.9, marker='+', zorder=4)  # fin
-    
-    # mid_idx = 0  
-    # # if mid_idx < len(traj) - 1:
-    # dx = traj[mid_idx + 1, 0] - traj[mid_idx, 0]
-    # dy = traj[mid_idx + 1, 1] - traj[mid_idx, 1]
-    # ax.arrow(traj[mid_idx, 0], traj[mid_idx, 1], dx, dy,
-    #              head_width=0.02*torch.max(traj), head_length=0.02*torch.max(traj),
-    #              fc=color, ec=color, alpha=0.7, length_includes_head=True)
-
-def plot_theta_trajectories_3d(ax, traj, linestyle=None, color=None, s=20):
-    ax.plot(traj[:, 0], traj[:, 1], traj[:, 2],
-            color=color, linestyle=linestyle, linewidth=1.5, alpha=0.7)
-
-    ax.scatter(traj[0, 0], traj[0, 1], traj[0, 2],
-               color=color, s=s, alpha=0.9)              # start
-    ax.scatter(traj[-1, 0], traj[-1, 1], traj[-1, 2],
-               color=color, s=s+50, alpha=0.9, marker='+')  # end
 
 
 def loss_theta(theta, X, Y):
@@ -278,20 +257,44 @@ for i, init in enumerate(all_init):
 
 #%%
 
+def plot_trajectories(ax, traj, linestyle=None, color=None, s=20, label=None):
+
+    ax.plot(traj[:, 0], traj[:, 1], color=color, alpha=0.7, linewidth=2.5, linestyle=linestyle, zorder=3, label=label)
+    ax.scatter(traj[0, 0], traj[0, 1], color=color, s=s, alpha=0.9, zorder=4)          # debut
+    ax.scatter(traj[-1, 0], traj[-1, 1], color=color, s=s+50, alpha=0.9, marker='+', zorder=4)  # fin
+    
+    mid_idx = 0  
+    # if mid_idx < len(traj) - 1:
+    dx = traj[mid_idx + 1, 0] - traj[mid_idx, 0]
+    dy = traj[mid_idx + 1, 1] - traj[mid_idx, 1]
+    ax.arrow(traj[mid_idx, 0], traj[mid_idx, 1], dx, dy,
+                 head_width=0.02*torch.max(traj), 
+                 head_length=0.02*torch.max(traj),
+                 fc=color, ec=color, alpha=0.7, length_includes_head=True)
+
+def plot_theta_trajectories_3d(ax, traj, linestyle=None, color=None, s=20):
+    ax.plot(traj[:, 0], traj[:, 1], traj[:, 2],
+            color=color, linestyle=linestyle, linewidth=2.5, alpha=0.7)
+
+    ax.scatter(traj[0, 0], traj[0, 1], traj[0, 2],
+               color=color, s=s, alpha=0.9)              # start
+    ax.scatter(traj[-1, 0], traj[-1, 1], traj[-1, 2],
+               color=color, s=s+50, alpha=0.9, marker='+')  # end
+
 
 fs=15 
 s=20
+# legend_lines = [
+#     Line2D([0], [0], linestyle='--', color='black',  label='Vanilla'),
+#     Line2D([0], [0], linestyle='-', color='black', label='Rescaled'),
+# ]
 legend_lines = [
-    Line2D([0], [0], linestyle='--', color='black',  label='Vanilla'),
-    Line2D([0], [0], linestyle='-', color='black', label='Rescaled'),
-]
-legend_lines_2 = [
-    # Line2D([0], [0], linestyle='--', color='black',  label='Vanilla'),
-    # Line2D([0], [0], linestyle='-', color='black', label='Rescaled'),
-    Line2D([0], [0], linestyle=':', color='black', label='GD in $\\Phi$'),
+    Line2D([0], [0], linestyle='--', color='black',  label='Vanilla GD'),
+    Line2D([0], [0], linestyle='-', color='black', label='PathCond'),
+    Line2D([0], [0], linestyle=':', color='black', label='GD for $\\ell(\\Phi)$'),
 ]
 
-fig = plt.figure(figsize=(17, 4))
+fig = plt.figure(figsize=(20, 3.5))
 
 gs = gridspec.GridSpec(
     1, 3,
@@ -299,9 +302,9 @@ gs = gridspec.GridSpec(
     wspace=0.3   # THIS works for 3D
 )
 
-ax0 = fig.add_subplot(gs[0])
+ax0 = fig.add_subplot(gs[2])
 ax1 = fig.add_subplot(gs[1])
-ax2 = fig.add_subplot(gs[2], projection='3d')
+ax2 = fig.add_subplot(gs[0], projection='3d')
 
 for i, init in enumerate(all_init):
     loss = all_losses[i]
@@ -309,15 +312,13 @@ for i, init in enumerate(all_init):
 
     ax0.plot(loss, lw=2, linestyle='--', color=cmap(i))
     ax0.plot(loss_rescaled, lw=2, linestyle='-', color=cmap(i))
-    ax0.set_xlabel("Epochs", fontsize=fs)
-    ax0.grid(alpha=0.5)
-    ax0.legend(handles=legend_lines, fontsize=fs-1)
+    ax0.set_xlabel("iter", fontsize=fs)
+    # ax0.legend(handles=legend_lines, fontsize=fs-1)
     ax0.set_yscale('log')
-    ax0.set_title('Loss $L(\\theta)$ during SGD',fontsize=fs+2)
+    ax0.set_title('Loss $L(\\theta)$ during GD',fontsize=fs+2)
     ax0.tick_params(axis='both', which='major', labelsize=fs-1)
     ax0.tick_params(axis='both', which='minor', labelsize=fs-1)
     ax0.set_xscale('log')
-
 
     traj_rescaled = torch.stack(all_phi_rescaled[i])
     traj = torch.stack(all_phi[i])
@@ -335,7 +336,19 @@ for i, init in enumerate(all_init):
                     marker='+',
                     zorder=10)   
         
-    ax1.legend(loc ='upper right', handles=legend_lines_2 , fontsize=fs-1)
+    if i == 0:
+        x0, y0 = traj[0, 0], traj[0, 1]
+        ax1.text(
+            x0, y0,
+            "start",
+            fontsize=fs-3,
+            ha='center',
+            va='bottom',
+            color=cmap(i),
+            zorder=6
+        )
+        
+    # ax1.legend(handles=legend_lines, fontsize=fs-1, bbox_to_anchor=(0.1, -0.0))
     ax1.set_xlabel('$uv$', fontsize=fs)
     ax1.set_ylabel('$uw$', fontsize=fs)
     ax1.set_title('Trajectory in $\\Phi$ space',fontsize=fs+2)
@@ -357,6 +370,16 @@ for i, init in enumerate(all_init):
                     color='black', s=50, marker='+')        
 
 
+    if i == 0:
+        x0, y0, z0 = traj_theta[0, 0], traj_theta[0, 1], traj_theta[0, 2]
+        ax2.text(
+            x0, y0, z0,
+            "start",
+            fontsize=fs-3,
+            ha='center',
+            va='bottom',
+            color=cmap(i)
+        )
     #ax2.zaxis.set_tick_params(pad=-2)
     ax2.set_zticks([])
     ax2.set_xticks([])
@@ -373,11 +396,14 @@ for i, init in enumerate(all_init):
     pos = ax2.get_position()
 
     ax2.set_position([
-        pos.x0 -0.005,  # ← shift left (adjust value)
+        pos.x0,  # ← shift left (adjust value)
         pos.y0,
         pos.width,
         pos.height
     ])
+
+
+ax0.grid(True, which='major', alpha=0.9)
 
 cf = plot_loss_levelsets_phi(
     ax1,
@@ -395,22 +421,13 @@ cf = plot_loss_levelsets_phi(
 )
 
 
-# After creating the colorbar
 cbar = fig.colorbar(cf, ax=ax1, pad=0.02)
-cbar.set_label('Loss in $\\Phi$', fontsize=fs-4)
+cbar.set_label('Loss $\\ell(\\Phi)$', fontsize=fs-2)
 cbar.ax.tick_params(labelsize=fs-2)
 
-# Set nice log ticks automatically
 cbar.locator = LogLocator(base=10.0)  # ticks at 10^n
 cbar.update_ticks()
-# ===== legend entry (proxy artist) =====
-# loss_patch = Patch(facecolor='lightgray', edgecolor='black', label='Loss level sets')
 
-# ax1.legend(
-#     handles= legend_lines,
-#     fontsize=fs,
-#     loc='upper right'
-# )
 
 u0, v0, w0 = theta_opt.tolist()   # or any fixed (u,v,w)
 
@@ -423,10 +440,19 @@ plot_scaling_orbit(
     linestyle='-',
     label='$\\theta \\sim \\theta_{\\text{opt}}$'
 )
-ax2.legend(loc='upper left', fontsize=fs-2, bbox_to_anchor=(-0.2, 1.0))
+handles_3d, labels_3d = ax2.get_legend_handles_labels()
+
+ax2.legend(
+    handles=handles_3d + legend_lines,
+    fontsize=fs-2,
+    # loc='upper right',
+    bbox_to_anchor=(0.9, 0.9)
+)
 ax2.view_init(elev=15, azim=60)
 
 plt.tight_layout()
+plt.savefig('../../../icml2026/fig/toy_illustration.pdf', 
+            bbox_inches="tight", pad_inches=0.1)
 plt.show()
 
 
