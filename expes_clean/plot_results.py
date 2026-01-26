@@ -213,18 +213,14 @@ def truncated_cmap(cmap, minval=0, maxval=0.93, n=256):
 def plot_multi_metrics_per_lr_same_fig(df, metrics_to_plot, lrs_to_plot=None, archs_to_plot=None, experiment_name=None, methods_to_plot=None, ax=None):
     if df.empty: return
 
-    # 1. GESTION DES AXES (Une seule fois au début)
     standalone = ax is None
     if standalone:
         fig, axes_list = plt.subplots(1, len(metrics_to_plot), figsize=(5 * len(metrics_to_plot), 4.2), squeeze=False)
         axes_list = axes_list.flatten()
     else:
-        # On s'assure que axes_list est itérable (soit la liste passée, soit l'unique axe mis en liste)
         axes_list = list(ax) if isinstance(ax, (list, np.ndarray)) else [ax]
-        # On ne garde que les métriques pour lesquelles on a des axes
         metrics_to_plot = metrics_to_plot[:len(axes_list)]
 
-    # --- Config Style & Maps (Identique) ---
     display_names = { "baseline": "Baseline", "pathcond": r"$\mathbf{Pathcond}$", "enorm": "Enorm", "bn_baseline": "Baseline", "bn_pathcond": r"$\mathbf{Pathcond}$", "bn_enorm": "Enorm", "pathcond_telep_schedule": r"Pathcond $\times$ Schedule", "bn_pathcond_telep_schedule": r"BN Pathcond $\times$ Sched" }
     style_map = { "baseline": {"color": "#1b9e77", "ls": "-", "marker": "o", "ms": 4}, "pathcond": {"color": "#d95f02", "ls": "-", "marker": "s", "ms": 4}, "enorm": {"color": "#7570b3", "ls": "-", "marker": "^", "ms": 4}, "bn_baseline": {"color": "#1b9e77", "ls": "--", "linewidth": 1.5, "zorder": 2}, "bn_pathcond": {"color": "#d95f02", "ls": "-", "linewidth": 1.5, "zorder": 1}, "bn_enorm": {"color": "#7570b3", "ls": "-", "linewidth": 1.5, "zorder": 1} }
 
@@ -292,14 +288,11 @@ def get_depth(arch):
 def plot_best_acc_vs_depth(df, lrs_to_plot=None, experiment_name=None):
     if df.empty: return
 
-    # On ne garde que la métrique de précision
     df_acc = df[df["metric"] == "test_acc"].copy()
     df_acc["depth"] = df_acc["architecture"].apply(get_depth)
 
-    # Pour chaque run (identifié par method, lr, seed, depth), on prend le max
     df_best = df_acc.groupby(["method", "lr", "seed", "depth"])["value"].max().reset_index()
 
-    # Configuration des styles (reprise de ton code)
     display_names = {
         "baseline": "Baseline",
         "pathcond": r"$\mathbf{Pathcond}$",
@@ -386,9 +379,7 @@ def plot_convergence_speed_vs_depth(
     if df.empty:
         return
 
-    # --------------------
-    # 1. Préparation
-    # --------------------
+
     df = df.copy()
     df["depth"] = df["architecture"].apply(get_depth)
 
@@ -423,9 +414,6 @@ def plot_convergence_speed_vs_depth(
         print(f"❌ Aucun run n'a atteint le seuil {target_value}")
         return
 
-    # --------------------
-    # 2. Style ICML global
-    # --------------------
     plt.rcParams.update({
         "font.family": "serif",
         "font.size": 11,
@@ -464,9 +452,6 @@ def plot_convergence_speed_vs_depth(
         else lrs_to_plot
     )
 
-    # --------------------
-    # 3. Plot
-    # --------------------
     for lr_val in unique_lrs:
         df_lr = df_conv[df_conv["lr"] == lr_val]
         if df_lr.empty:
@@ -493,8 +478,8 @@ def plot_convergence_speed_vs_depth(
                 stats["depth"],
                 stats["mean"],
                 yerr=stats["std"],
-                linestyle="-",            # ligne présente
-                linewidth=0.8,            # très fine
+                linestyle="-",           
+                linewidth=0.8,           
                 marker=style["marker"],
                 color=style["color"],
                 markersize=7,
@@ -535,7 +520,7 @@ def plot_convergence_speed_vs_depth(
             plt.savefig(out_dir / filename, bbox_inches="tight")
             plt.close()
         print(f"✅ Figure saved: {filename}")
-        return ax  # Retourne le dernier ax utilisé
+        return ax 
 
 
 
@@ -637,7 +622,6 @@ def plot_final_loss_and_rescalings(df, df_rescale, experiment_name):
             data_cf = sorted(df_path["compression_factor"].unique())
             data = [df_path[df_path["compression_factor"] == cf]["max_rescaling"].values for cf in data_cf]
 
-            # 1. Dessiner le boxplot avec une largeur suffisante
             bp = ax_rescale.boxplot(
                 data,
                 positions=data_cf,
@@ -648,16 +632,13 @@ def plot_final_loss_and_rescalings(df, df_rescale, experiment_name):
                 zorder=2
             )
 
-            # Style des boîtes
             for box in bp['boxes']:
                 box.set(facecolor="#d95f02", alpha=0.3, edgecolor="black", linewidth=0.8)
             for median in bp['medians']:
                 median.set(color="black", linewidth=1.5)
 
-            # 2. AJOUT : Jittering (dessiner les points individuels)
             for i, cf in enumerate(data_cf):
                 y = data[i]
-                # On crée un décalage horizontal aléatoire (jitter)
                 x = np.random.normal(cf, 0.04, size=len(y)) 
                 ax_rescale.scatter(
                     x, y, 
@@ -703,7 +684,6 @@ import numpy as np
 
 def plot_master_zoom_panel(df, lr_val, target_depth_str, target_metric, metrics, target_value, experiment_name, methods):
     n_right = len(metrics)
-    # Ratio : la vue d'ensemble à gauche est légèrement plus large
     width_ratios = [1.5] + [1] * n_right
     fig, axes = plt.subplots(1, 1 + n_right, figsize=(4 * (1 + n_right), 4.5), 
                              gridspec_kw={'width_ratios': width_ratios})
@@ -711,7 +691,6 @@ def plot_master_zoom_panel(df, lr_val, target_depth_str, target_metric, metrics,
     ax_left = axes[0]
     axes_right = axes[1:]
 
-    # 1. Génération des graphiques
     plot_convergence_speed_vs_depth(
         df, target_value=target_value, lrs_to_plot=[lr_val], 
         ax=ax_left, experiment_name=experiment_name, target_metric=target_metric
@@ -723,7 +702,6 @@ def plot_master_zoom_panel(df, lr_val, target_depth_str, target_metric, metrics,
         ax=axes_right
     )
 
-    # 2. DÉFINIR LE CARRÉ DE ZOOM
     x_center = get_depth(target_depth_str)
     
     y_values = []
@@ -731,16 +709,14 @@ def plot_master_zoom_panel(df, lr_val, target_depth_str, target_metric, metrics,
         x_data = np.array(line.get_xdata())
         y_data = np.array(line.get_ydata())
         
-        # On utilise np.isclose au lieu de == pour éviter les erreurs de flottants
-        # et on vérifie que les données ne sont pas vides
+
         if len(x_data) > 0:
             idx = np.where(np.isclose(x_data, x_center))[0]
             if len(idx) > 0:
                 val = y_data[idx[0]]
-                if np.isfinite(val): # Vérifie que ce n'est pas NaN ou Inf
+                if np.isfinite(val):
                     y_values.append(val)
     
-    # Sécurité : si on ne trouve rien, on prend le milieu de l'échelle affichée
     if len(y_values) > 0:
         y_center = np.mean(y_values) - 0.08 * (ax_left.get_ylim()[1] - ax_left.get_ylim()[0]) # Légère correction vers le bas
     else:
@@ -748,14 +724,12 @@ def plot_master_zoom_panel(df, lr_val, target_depth_str, target_metric, metrics,
         y_lims = ax_left.get_ylim()
         y_center = (y_lims[0] + y_lims[1]) / 2
 
-    # --- Vérification finale avant création du rectangle ---
     if not np.isfinite(y_center):
-        y_center = 0 # Valeur de secours ultime
+        y_center = 0 
 
-    # --- Paramètres du Rectangle ---
     y_range = ax_left.get_ylim()[1] - ax_left.get_ylim()[0]
-    rect_w = 0.8  # Un peu moins de 1 pour ne pas coller aux autres points
-    rect_h = y_range * 0.5 # 30% de la hauteur totale
+    rect_w = 0.8  
+    rect_h = y_range * 0.5 
 
     rect = Rectangle(
         (x_center - rect_w/2, y_center - rect_h/2), rect_w, rect_h,
@@ -764,7 +738,6 @@ def plot_master_zoom_panel(df, lr_val, target_depth_str, target_metric, metrics,
     )
     ax_left.add_patch(rect)
 
-# 3. TRACER LES LIGNES DE CONNEXION (Zoom effect)
     common_style = dict(
         coordsA="data", 
         coordsB="axes fraction",
@@ -772,25 +745,22 @@ def plot_master_zoom_panel(df, lr_val, target_depth_str, target_metric, metrics,
         axesB=axes_right[0], 
         color="gray", 
         linestyle="--", 
-        alpha=0.6,          # Un peu plus visible
+        alpha=0.6,         
         linewidth=1.0,
-        zorder=100,         # VALEUR ÉLEVÉE pour passer devant les plots
-        clip_on=False       # IMPORTANT : permet de traverser l'espace entre les axes
+        zorder=100,         
+        clip_on=False       
     )
     # Ligne haute
     con1 = ConnectionPatch(xyA=(x_center + rect_w/2, y_center + rect_h/2), xyB=(0, 1), **common_style)
     # Ligne basse
     con2 = ConnectionPatch(xyA=(x_center + rect_w/2, y_center - rect_h/2), xyB=(0, 0), **common_style)
     
-    # On ajoute explicitement les artistes à la FIGURE et non aux axes
     fig.add_artist(con1)
     fig.add_artist(con2)
 
-    # 4. Nettoyage final pour ICML
     if ax_left.get_legend():
         ax_left.get_legend().remove()
     
-    # On place une légende unique en bas centrée
     handles, labels = axes_right[0].get_legend_handles_labels()
     if handles:
         fig.legend(handles, labels, loc='lower center', ncol=len(labels), 
@@ -817,14 +787,11 @@ def plot_master_zoom_panel(df, lr_val, target_depth_str, target_metric, metrics,
 #     df_all = get_multiple_metrics_history_fast(EXP_NAME, metrics_list=METRICS)
     
 #     if not df_all.empty:
-#         # 1. Tes plots individuels (Optionnel, si tu veux toujours les fichiers séparés)
 #         # plot_multi_metrics_per_lr_same_fig(...)
 #         # plot_convergence_speed_vs_depth(...)
 
-#         # 2. APPEL DU PANNEAU ZOOM (La nouvelle figure combinée pour ICML)
 #         print(f"Generating Master Zoom Panel for {TARGET_DEPTH_STR}...")
         
-#         # On définit une fonction master qui appelle les deux autres sur la même figure
 #         plot_master_zoom_panel(
 #             df=df_all, 
 #             lr_val=TARGET_LR, 
