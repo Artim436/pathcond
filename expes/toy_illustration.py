@@ -282,173 +282,146 @@ def plot_theta_trajectories_3d(ax, traj, linestyle=None, color=None, s=20):
                color=color, s=s+50, alpha=0.9, marker='+')  # end
 
 
-fs=15 
-s=20
-# legend_lines = [
-#     Line2D([0], [0], linestyle='--', color='black',  label='Vanilla'),
-#     Line2D([0], [0], linestyle='-', color='black', label='Rescaled'),
-# ]
-legend_lines = [
-    Line2D([0], [0], linestyle='--', color='black',  label='Vanilla GD'),
-    Line2D([0], [0], linestyle='-', color='black', label='PathCond'),
-    Line2D([0], [0], linestyle=':', color='black', label='GD for $\\ell(\\Phi)$'),
+fs = 17
+s = 20
+
+# Legends
+legend_lines_loss = [
+    Line2D([0], [0], linestyle='--', color='black', label='Vanilla GD'),
+    Line2D([0], [0], linestyle='-', color='black', label='PathCond')
 ]
+legend_lines_path = [
+    Line2D([0], [0], linestyle='--', color='black', label='Vanilla GD'),
+    Line2D([0], [0], linestyle='-', color='black', label='PathCond'),
+    Line2D([0], [0], linestyle=':', color='black', label='GD for $\\ell(\\Phi)$')
+]
+fig = plt.figure(figsize=(25, 5))
+gs = gridspec.GridSpec(1, 3, width_ratios=[1,1,1], wspace=0.2)
 
-fig = plt.figure(figsize=(20, 3.5))
+# ------------------- SUBPLOT 1: LOSS L(theta) -------------------
+ax0 = fig.add_subplot(gs[0])
+for i in range(len(all_init)):
+    ax0.plot(all_losses[i], lw=2, linestyle='--', color=cmap(i))
+    ax0.plot(all_losses_rescaled[i], lw=2, linestyle='-', color=cmap(i))
 
-gs = gridspec.GridSpec(
-    1, 3,
-    width_ratios=[1, 1, 1],
-    wspace=0.3   # THIS works for 3D
-)
+ax0.set_xlabel("iter", fontsize=fs)
+ax0.set_xscale('log')
+ax0.set_yscale('log')
+ax0.set_title('Loss $L(\\theta)$ during GD', fontsize=fs+2)
+ax0.tick_params(axis='both', which='major', labelsize=fs-1)
+ax0.tick_params(axis='both', which='minor', labelsize=fs-1)
+ax0.grid(True, which='major', alpha=0.9)
+ax0.legend(loc="lower left", handles=legend_lines_loss, fontsize=fs-2)
 
-ax0 = fig.add_subplot(gs[2])
+# ------------------- SUBPLOT 2: PHI TRAJECTORIES + LOSS LEVEL SETS -------------------
 ax1 = fig.add_subplot(gs[1])
-ax2 = fig.add_subplot(gs[0], projection='3d')
 
-for i, init in enumerate(all_init):
-    loss = all_losses[i]
-    loss_rescaled = all_losses_rescaled[i]
-
-    ax0.plot(loss, lw=2, linestyle='--', color=cmap(i))
-    ax0.plot(loss_rescaled, lw=2, linestyle='-', color=cmap(i))
-    ax0.set_xlabel("iter", fontsize=fs)
-    # ax0.legend(handles=legend_lines, fontsize=fs-1)
-    ax0.set_yscale('log')
-    ax0.set_title('Loss $L(\\theta)$ during GD',fontsize=fs+2)
-    ax0.tick_params(axis='both', which='major', labelsize=fs-1)
-    ax0.tick_params(axis='both', which='minor', labelsize=fs-1)
-    ax0.set_xscale('log')
-
-    traj_rescaled = torch.stack(all_phi_rescaled[i])
+for i in range(len(all_init)):
     traj = torch.stack(all_phi[i])
+    traj_rescaled = torch.stack(all_phi_rescaled[i])
     traj_ideal = torch.stack(all_phi_ideal[i])
+
     plot_trajectories(ax1, traj, linestyle='--', color=cmap(i), s=s)
     plot_trajectories(ax1, traj_rescaled, linestyle='-', color=cmap(i), s=s)
     plot_trajectories(ax1, traj_ideal, linestyle=':', color=cmap(i), s=s)
 
+    # start/end markers
+    ax1.scatter(traj[0,0], traj[0,1], marker='o', color=cmap(i), s=50, label='init' if i==0 else None)
+    ax1.scatter(traj[-1,0], traj[-1,1], marker='+', color=cmap(i), s=50, label='end' if i==0 else None)
     if i == 0:
-        ax1.scatter(theta_opt[0]*theta_opt[1], 
-                    theta_opt[0]*theta_opt[2], 
-                    label='$\\Phi(\\theta_{\\text{opt}})$', 
-                    color='black', 
-                    s=50, 
-                    marker='+',
-                    zorder=10)   
-        
-    if i == 0:
-        x0, y0 = traj[0, 0], traj[0, 1]
         ax1.text(
-            x0, y0,
-            "start",
+            traj[0,0], traj[0,1],
+            "init",
             fontsize=fs-3,
-            ha='center',
+            ha='left',
             va='bottom',
             color=cmap(i),
-            zorder=6
+            zorder=10
         )
-        
-    # ax1.legend(handles=legend_lines, fontsize=fs-1, bbox_to_anchor=(0.1, -0.0))
-    ax1.set_xlabel('$uv$', fontsize=fs)
-    ax1.set_ylabel('$uw$', fontsize=fs)
-    ax1.set_title('Trajectory in $\\Phi$ space',fontsize=fs+2)
-
-
-
-    # θ trajectories (3D)
-    traj_theta = torch.stack(all_theta[i])
-    traj_theta_rescaled = torch.stack(all_theta_rescaled[i])
-    plot_theta_trajectories_3d(ax2, traj_theta, linestyle='--', color=cmap(i))
-    plot_theta_trajectories_3d(ax2, traj_theta_rescaled, linestyle='-', color=cmap(i))
-
-    if i == 0:
-        ax2.scatter(theta_opt[0], theta_opt[1], theta_opt[2], 
-                    label='$\\theta_{\\text{opt}}$', 
-                    color='black', s=50, marker='+')
-    else:
-        ax2.scatter(theta_opt[0], theta_opt[1], theta_opt[2], 
-                    color='black', s=50, marker='+')        
-
-
-    if i == 0:
-        x0, y0, z0 = traj_theta[0, 0], traj_theta[0, 1], traj_theta[0, 2]
-        ax2.text(
-            x0, y0, z0,
-            "start",
+        ax1.text(
+            traj[-1,0], traj[-1,1],
+            "end",
             fontsize=fs-3,
-            ha='center',
+            ha='left',
             va='bottom',
-            color=cmap(i)
+            color=cmap(i),
+            zorder=10
         )
-    #ax2.zaxis.set_tick_params(pad=-2)
-    ax2.set_zticks([])
-    ax2.set_xticks([])
-    ax2.set_yticks([])
+if len(all_init) > 0:
+    ax1.scatter(theta_opt[0]*theta_opt[1], theta_opt[0]*theta_opt[2],
+                color='black', s=50, marker='+', label='$\\Phi(\\theta_{\\text{opt}})$', zorder=10)
 
-    ax2.set_xlabel('$w$', fontsize=fs, labelpad=-11)
-    ax2.set_ylabel('$v$', fontsize=fs, labelpad=-11)
-    ax2.set_zlabel('$u$', fontsize=fs, labelpad=-11)
-    ax2.set_title('Trajectory in $\\Theta$ space', fontsize=fs+2)
+ax1.set_xlabel('$uv$', fontsize=fs)
+ax1.set_ylabel('$uw$', fontsize=fs)
+ax1.set_title('Trajectory in $\\Phi$ space', fontsize=fs+2)
 
-    # get current position of 3D axis
-
-    # move it left (reduce x0)
-    pos = ax2.get_position()
-
-    ax2.set_position([
-        pos.x0,  # ← shift left (adjust value)
-        pos.y0,
-        pos.width,
-        pos.height
-    ])
-
-
-ax0.grid(True, which='major', alpha=0.9)
-
-cf = plot_loss_levelsets_phi(
-    ax1,
-    loss_phi,
-    uv_range=(0, 4.5),
-    uw_range=(-3, 4.5),
-    # uv_range=(-50, 50),
-    # uw_range=(-50, 50),
-    levels=15,
-    cmap="Greys",
-    log_scale=True,
-    alpha=0.35,
-    zorder=-1,
-    n=250
-)
-
+cf = plot_loss_levelsets_phi( ax1, loss_phi, uv_range=(0, 4.5), uw_range=(-3, 4.5), 
+                             # uv_range=(-50, 50), # uw_range=(-50, 50), 
+                             levels=15, cmap="Greys", 
+                             log_scale=True, 
+                             alpha=0.35, 
+                             zorder=-1, 
+                             n=250)
 
 cbar = fig.colorbar(cf, ax=ax1, pad=0.02)
 cbar.set_label('Loss $\\ell(\\Phi)$', fontsize=fs-2)
 cbar.ax.tick_params(labelsize=fs-2)
 
-cbar.locator = LogLocator(base=10.0)  # ticks at 10^n
+cbar.locator = LogLocator(base=10.0) # ticks at 10^n 
 cbar.update_ticks()
 
+ax1.legend(loc = "lower left", 
+           handles=legend_lines_path, 
+           fontsize=fs-3, 
+           bbox_to_anchor=(0,0))
 
-u0, v0, w0 = theta_opt.tolist()   # or any fixed (u,v,w)
+# ------------------- SUBPLOT 3: 3D THETA TRAJECTORIES -------------------
+ax2 = fig.add_subplot(gs[2], projection='3d')
 
-plot_scaling_orbit(
-    ax2,
-    u=u0, v=v0, w=w0,
-    lambda_min=0.45,
-    lambda_max=6,
-    color='grey',
-    linestyle='-',
-    label='$\\theta \\sim \\theta_{\\text{opt}}$'
-)
-handles_3d, labels_3d = ax2.get_legend_handles_labels()
+for i in range(len(all_init)):
+    traj_theta = torch.stack(all_theta[i])
+    traj_theta_rescaled = torch.stack(all_theta_rescaled[i])
 
-ax2.legend(
-    handles=handles_3d + legend_lines,
-    fontsize=fs-2,
-    # loc='upper right',
-    bbox_to_anchor=(0.9, 0.9)
-)
+    plot_theta_trajectories_3d(ax2, traj_theta, linestyle='--', color=cmap(i))
+    plot_theta_trajectories_3d(ax2, traj_theta_rescaled, linestyle='-', color=cmap(i))
+
+    # start/end markers
+    ax2.scatter(traj_theta[0,0], traj_theta[0,1], traj_theta[0,2], marker='o', color=cmap(i), s=50)
+    ax2.scatter(traj_theta[-1,0], traj_theta[-1,1], traj_theta[-1,2], marker='+', color=cmap(i), s=50)
+
+# Optimal theta
+ax2.scatter(theta_opt[0], theta_opt[1], theta_opt[2], color='black', s=50, marker='+', label='$\\theta_{\\text{opt}}$')
+
+# Scaling orbit
+u0, v0, w0 = theta_opt.tolist()
+plot_scaling_orbit(ax2, u=u0, v=v0, w=w0, 
+                   lambda_min=0.45, 
+                   lambda_max=6,
+                   color='grey', 
+                   linestyle='-', 
+                   label='$\\theta \\sim \\theta_{\\text{opt}}$')
+
+ax2.set_xlabel('$w$', fontsize=fs, labelpad=-11)
+ax2.set_ylabel('$v$', fontsize=fs, labelpad=-11)
+ax2.set_zlabel('$u$', fontsize=fs, labelpad=-11)
+ax2.set_title('Trajectory in $\\Theta$ space', fontsize=fs+2)
+ax2.set_zticks([]); ax2.set_xticks([]); ax2.set_yticks([])
+
+# Keep only theta_opt in legend
+handles, labels = ax2.get_legend_handles_labels()
+ax2.legend(handles, labels, fontsize=fs-2, bbox_to_anchor=(0.3,1.0))
+
 ax2.view_init(elev=15, azim=60)
+
+pos1 = ax1.get_position()  # position du subplot phi (2ème)
+pos2 = ax2.get_position()  # position du subplot 3D (3ème)
+
+ax2.set_position([
+    pos1.x1 + 0.07,  # position x : juste à droite de ax1
+    pos2.y0,          # conserver la même hauteur
+    pos2.width,       # largeur inchangée
+    pos2.height       # hauteur inchangée
+])
 
 plt.tight_layout()
 plt.savefig('../../../icml2026/fig/toy_illustration.pdf', 
