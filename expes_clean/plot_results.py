@@ -100,9 +100,9 @@ def plot_multi_metrics_per_lr(df, metrics_to_plot, lrs_to_plot=None, experiment_
         "baseline": "Baseline",
         "pathcond": r"$\mathbf{Pathcond}$",
         "enorm": "Enorm",
-        "bn_baseline": "BN Baseline",
-        "bn_pathcond": r"$\mathbf{BN\ Pathcond}$",
-        "bn_enorm": "BN Enorm",
+        "bn_baseline": "Baseline",
+        "bn_pathcond": r"$\mathbf{Pathcond}$",
+        "bn_enorm": "Enorm",
         "pathcond_telep_schedule": r"$\mathbf{Pathcond\ \times Times}$",
         "bn_pathcond_telep_schedule": r"$\mathbf{BN\ Pathcond\ \times Times}$",
     }
@@ -208,190 +208,77 @@ def truncated_cmap(cmap, minval=0, maxval=0.93, n=256):
     )
 
 
-def plot_multi_metrics_per_lr_same_fig(df, metrics_to_plot, lrs_to_plot=None, archs_to_plot=None, experiment_name=None, methods_to_plot=None):
-    """
-    Trace plusieurs métriques par learning rate, avec toutes les architectures sur la même figure.
-    
-    Args:
-        df: DataFrame contenant les données
-        metrics_to_plot: Liste des métriques à tracer
-        lrs_to_plot: Liste des learning rates à tracer (None = tous)
-        archs_to_plot: Liste des architectures à tracer (None = toutes)
-        experiment_name: Nom de l'expérience pour la sauvegarde
-    """
-    if df.empty: 
-        print("DataFrame vide, rien à tracer.")
-        return
 
-    # Configuration des noms et styles
-    display_names = {
-        "baseline": "Baseline",
-        "pathcond": r"$\mathbf{Pathcond}$",
-        "enorm": "Enorm",
-        "bn_baseline": "BN Baseline",
-        "bn_pathcond": r"$\mathbf{BN\ Pathcond}$",
-        "bn_enorm": "BN Enorm",
-        "pathcond_telep_schedule": r"$\mathbf{Pathcond\ \times Times}$",
-        "bn_pathcond_telep_schedule": r"$\mathbf{BN\ Pathcond\ \times Times}$",
-    }
-    plasma_trunc = truncated_cmap(cm.plasma, 0, 0.8)
-    n_arch = 4
-    arch_colors = {
-        i: plasma_trunc(i / (n_arch - 1))
-        for i in range(n_arch)
-    }
 
-    method_styles = {
-    "baseline": {"ls": "-",  "linewidth": 2.0},
-    "pathcond": {"ls": "-."},
-    "enorm": {"ls": ":"},
+def plot_multi_metrics_per_lr_same_fig(df, metrics_to_plot, lrs_to_plot=None, archs_to_plot=None, experiment_name=None, methods_to_plot=None, ax=None):
+    if df.empty: return
 
-    "bn_baseline": {"ls": "--", "linewidth": 2.0},
-    "bn_pathcond": {"ls": (0, (5, 2, 1, 2))},  # dash-dot custom
-    "bn_enorm": {"ls": (0, (1, 1))},          # dotted fin
+    # 1. GESTION DES AXES (Une seule fois au début)
+    standalone = ax is None
+    if standalone:
+        fig, axes_list = plt.subplots(1, len(metrics_to_plot), figsize=(5 * len(metrics_to_plot), 4.2), squeeze=False)
+        axes_list = axes_list.flatten()
+    else:
+        # On s'assure que axes_list est itérable (soit la liste passée, soit l'unique axe mis en liste)
+        axes_list = list(ax) if isinstance(ax, (list, np.ndarray)) else [ax]
+        # On ne garde que les métriques pour lesquelles on a des axes
+        metrics_to_plot = metrics_to_plot[:len(axes_list)]
 
-    "pathcond_telep_schedule": {"ls": (0, (3, 1, 1, 1))},
-    "bn_pathcond_telep_schedule": {"ls": (0, (3, 1, 1, 1, 1, 1))},
-}
-
-    # Styles pour différencier les architectures (markers)
-    arch_markers = {
-        0: {"marker": "o", "markersize": 4, "markevery": 50},
-        1: {"marker": "s", "markersize": 4, "markevery": 45},
-        2: {"marker": "^", "markersize": 5, "markevery": 40},
-        3: {"marker": "D", "markersize": 4, "markevery": 35},
-        4: {"marker": "v", "markersize": 5, "markevery": 30},
-        5: {"marker": "p", "markersize": 5, "markevery": 25},
-    }
-
-    z_order = {
-        "baseline": 2,
-        "pathcond": 3,
-        "enorm": 1,
-    }
+    # --- Config Style & Maps (Identique) ---
+    display_names = { "baseline": "Baseline", "pathcond": r"$\mathbf{Pathcond}$", "enorm": "Enorm", "bn_baseline": "Baseline", "bn_pathcond": r"$\mathbf{Pathcond}$", "bn_enorm": "Enorm", "pathcond_telep_schedule": r"Pathcond $\times$ Schedule", "bn_pathcond_telep_schedule": r"BN Pathcond $\times$ Sched" }
+    style_map = { "baseline": {"color": "#1b9e77", "ls": "-", "marker": "o", "ms": 4}, "pathcond": {"color": "#d95f02", "ls": "-", "marker": "s", "ms": 4}, "enorm": {"color": "#7570b3", "ls": "-", "marker": "^", "ms": 4}, "bn_baseline": {"color": "#1b9e77", "ls": "--", "linewidth": 1.5, "zorder": 2}, "bn_pathcond": {"color": "#d95f02", "ls": "-", "linewidth": 1.5, "zorder": 1}, "bn_enorm": {"color": "#7570b3", "ls": "-", "linewidth": 1.5, "zorder": 1} }
 
     unique_lrs = sorted(df["lr"].unique()) if lrs_to_plot is None else sorted(lrs_to_plot)
-    
-    # Filtrer les architectures
-    if "architecture" in df.columns:
-        all_archs = sorted(df["architecture"].unique())
-        if archs_to_plot is not None:
-            architectures = [a for a in archs_to_plot if a in all_archs]
-        else:
-            architectures = all_archs
-    else:
-        architectures = [None]
-
-    n_metrics = len(metrics_to_plot)
+    architectures = [a for a in (archs_to_plot or sorted(df["architecture"].unique())) if a in df["architecture"].unique()] if "architecture" in df.columns else [None]
 
     for lr_val in unique_lrs:
         df_for_lr = df[df["lr"] == lr_val]
-        if df_for_lr.empty: 
-            continue
-
-        # Filtrer par architectures sélectionnées
-        if architectures[0] is not None and archs_to_plot is not None:
-            df_for_lr = df_for_lr[df_for_lr["architecture"].isin(architectures)]
-            if df_for_lr.empty:
-                continue
-
-        if methods_to_plot is not None:
+        if methods_to_plot:
             df_for_lr = df_for_lr[df_for_lr["method"].isin(methods_to_plot)]
-            if df_for_lr.empty:
-                continue
+        if df_for_lr.empty: continue
 
-
-        # Création de la figure avec toutes les architectures
-        fig, axes = plt.subplots(1, n_metrics, figsize=(5 * n_metrics, 4.5), squeeze=False)
-        
-        arch_str = f" - Archs: {', '.join(map(str, architectures))}" if architectures[0] is not None else ""
-        fig.suptitle(f"Learning Rate: {lr_val}{arch_str}", fontsize=14, fontweight='bold')
-
+        # --- BOUCLE SUR LES METRIQUES ---
         for i, metric in enumerate(metrics_to_plot):
-            ax = axes[0, i]
+            curr_ax = axes_list[i]
             df_metric = df_for_lr[df_for_lr["metric"] == metric]
-            
-            if df_metric.empty: 
-                continue
+            seen_labels = set()
 
-            # Tracer chaque combinaison méthode × architecture
-            for method_id, style in method_styles.items():
-                for arch_idx, arch in enumerate(architectures):
-                    if arch is not None:
-                        subset = df_metric[(df_metric["method"] == method_id) & 
-                                          (df_metric["architecture"] == arch)]
-                    else:
-                        subset = df_metric[df_metric["method"] == method_id]
-                    
-                    if subset.empty: 
-                        continue
+            for arch in architectures:
+                for method_id, style in style_map.items():
+                    subset = df_metric[df_metric["method"] == method_id]
+                    if arch is not None: subset = subset[subset["architecture"] == arch]
+                    if subset.empty: continue
 
-                    # Calcul moyenne et std par step
                     stats = subset.groupby("step")["value"].agg(["mean", "std"]).reset_index()
+                    label = f"{display_names.get(method_id, method_id)} ({arch})" if len(architectures) > 1 else display_names.get(method_id, method_id)
+                    plot_label = label if label not in seen_labels else None
+                    seen_labels.add(label)
 
-                    # Label avec architecture si plusieurs
-                    if len(architectures) > 1 and arch is not None:
-                        label = f"{display_names.get(method_id, method_id)} (arch={arch})"
-                    else:
-                        label = display_names.get(method_id, method_id)
-
-                    # Style de base + marker pour l'architecture
-                    # marker_style = arch_markers.get(arch_idx % len(arch_markers), {})
-                    
-                    ax.plot(stats["step"], stats["mean"], 
-                            label=label,
-                            color=arch_colors[arch_idx % n_arch],
-                            linestyle=style["ls"], 
-                            linewidth=style.get("linewidth", 1.8),
-                            alpha=0.75,
-                            zorder=z_order[method_id],
-                            # **arch_markers.get(arch_idx % len(arch_markers), {})
-                            ) # **marker_style)
+                    curr_ax.plot(stats["step"], stats["mean"], label=plot_label, color=style["color"],
+                                   linestyle=style["ls"], linewidth=1.8, marker=style.get("marker"),
+                                   markevery=max(1, len(stats)//10), markersize=style.get("ms", 0), alpha=0.9, zorder=style.get("zorder", 1))
                     
                     if stats["std"].notnull().any():
-                        ax.fill_between(stats["step"], 
-                                       stats["mean"] - stats["std"]/10, 
-                                       stats["mean"] + stats["std"]/10, 
-                                       color=arch_colors[arch_idx % n_arch],
-                                       alpha=0.15)
+                        curr_ax.fill_between(stats["step"], stats["mean"] - stats["std"], stats["mean"] + stats["std"], 
+                                             color=style["color"], alpha=0.15, zorder=1)
 
-            ax.set_title(metric.replace("_", " ").upper(), fontsize=12)
-            ax.set_xlabel("Epochs / Steps")
-            ax.grid(True, alpha=0.3)
-            # if "loss" in metric.lower():
-            #     ax.set_yscale("log")
+            # Cosmétique
+            curr_ax.set_xlabel("Steps")
+            curr_ax.set_ylabel(metric.replace("_", " ").title())
+            if "loss" in metric.lower(): curr_ax.set_yscale("log")
+            curr_ax.grid(True, linestyle='--', alpha=0.5)
 
-        # Légende
-        handles, labels = axes[0, 0].get_legend_handles_labels()
-        if handles:
-            fig.legend(handles, labels, loc='center left', 
-                      bbox_to_anchor=(1.0, 0.5), frameon=False)
+        # Légende sur le dernier axe ou via fig.legend
+        handles, labels = curr_ax.get_legend_handles_labels()
+        if handles and standalone:
+            curr_ax.legend(handles, labels, loc='best', frameon=True)
         
-        plt.tight_layout(rect=[0, 0.03, 0.98, 0.93])
-        
-        # Sauvegarde
-        exp_map = {
-            "PC_mnist_enc_dec_3_machines": "mnist_encoder_decoder",
-            "PC_cifar10_petit_salon": "cifar10_resnet",
-            "PC_moons_diamond": "moons_diamond",
-            'PC_fixed_depth': 'fixed_depth',
-            'PC_fixed_width': 'fixed_width',
-        }
-        safe_exp_name = exp_map.get(experiment_name, experiment_name or "experiment")
-
-        out_dir = _ensure_outdir(f"figures/multi_metrics/{safe_exp_name}/")
-        
-        # Nom de fichier avec les architectures
-        if len(architectures) > 1 and architectures[0] is not None:
-            arch_str_file = "_".join(map(str, architectures))
-            filename = f"lr_{lr_val}_archs_{arch_str_file}.pdf"
-        else:
-            arch_name = str(architectures[0]).replace("/", "_") if architectures[0] is not None else "default"
-            filename = f"lr_{lr_val}_arch_{arch_name}.pdf"
-        
-        plt.savefig(out_dir / filename, bbox_inches='tight')
-        plt.close(fig)
-        print(f"✅ Figure saved: {filename}")
+        if standalone:
+            plt.tight_layout()
+            out_dir = _ensure_outdir(f"figures/multi_metrics/{experiment_name}/")
+            filename = f"lr_{lr_val}_multi_metrics.pdf"
+            plt.savefig(out_dir / filename, bbox_inches='tight')
+            plt.close(fig)
 
 def get_depth(arch):
     if pd.isna(arch): return 0
@@ -417,9 +304,9 @@ def plot_best_acc_vs_depth(df, lrs_to_plot=None, experiment_name=None):
         "baseline": "Baseline",
         "pathcond": r"$\mathbf{Pathcond}$",
         "enorm": "Enorm",
-        "bn_baseline": "BN Baseline",
-        "bn_pathcond": r"$\mathbf{BN\ Pathcond}$",
-        "bn_enorm": "BN Enorm",
+        "bn_baseline": "Baseline",
+        "bn_pathcond": r"$\mathbf{Pathcond}$",
+        "bn_enorm": "Enorm",
         "pathcond_telep_schedule": r"$\mathbf{Pathcond\ \times Times}$",
         "bn_pathcond_telep_schedule": r"$\mathbf{BN\ Pathcond\ \times Times}$",
     }
@@ -494,6 +381,7 @@ def plot_convergence_speed_vs_depth(
     target_value=0.9,
     lrs_to_plot=None,
     experiment_name=None,
+    ax=None
 ):
     if df.empty:
         return
@@ -551,11 +439,11 @@ def plot_convergence_speed_vs_depth(
         "baseline": "Baseline",
         "pathcond": r"$\mathbf{Pathcond}$",
         "enorm": "Enorm",
-        "bn_baseline": "BN Baseline",
-        "bn_pathcond": r"$\mathbf{BN\ Pathcond}$",
-        "bn_enorm": "BN Enorm",
+        "bn_baseline": "Baseline",
+        "bn_pathcond": r"$\mathbf{Pathcond}$",
+        "bn_enorm": "Enorm",
         "pathcond_telep_schedule": r"$\mathbf{Pathcond \times Times}$",
-        "bn_pathcond_telep_schedule": r"$\mathbf{BN\ Pathcond \times Times}$",
+ #       "bn_pathcond_telep_schedule": r"$\mathbf{BN\ Pathcond \times Times}$",
     }
 
     # Couleur = méthode, marqueur = BN / non-BN
@@ -567,7 +455,7 @@ def plot_convergence_speed_vs_depth(
         "bn_pathcond": {"color": "#d95f02", "marker": "s"},
         "bn_enorm":    {"color": "#7570b3", "marker": "^"},
         "pathcond_telep_schedule": {"color": "#a63603", "marker": "s"},
-        "bn_pathcond_telep_schedule": {"color": "#a63603", "marker": "s"},
+ #       "bn_pathcond_telep_schedule": {"color": "#a63603", "marker": "s"},
     }
 
     unique_lrs = (
@@ -584,7 +472,9 @@ def plot_convergence_speed_vs_depth(
         if df_lr.empty:
             continue
 
-        fig, ax = plt.subplots(figsize=(6.2, 4.2))
+        standalone = ax is None
+        if standalone:
+            fig, ax = plt.subplots(figsize=(6.2, 4.2))
 
         for method_id, style in style_map.items():
             subset = df_lr[df_lr["method"] == method_id]
@@ -624,7 +514,7 @@ def plot_convergence_speed_vs_depth(
 
         ax.legend(
             loc="upper right",
-            frameon=False,
+            frameon=True,
             markerscale=1.2,
             handletextpad=0.6,
             labelspacing=0.4,
@@ -641,23 +531,16 @@ def plot_convergence_speed_vs_depth(
         out_dir = _ensure_outdir(f"figures/{safe_exp_name}/")
 
         filename = f"conv_speed_depth_lr_{lr_val}.pdf"
-        plt.savefig(out_dir / filename, bbox_inches="tight")
-        plt.close()
-
+        if standalone:
+            plt.savefig(out_dir / filename, bbox_inches="tight")
+            plt.close()
         print(f"✅ Figure saved: {filename}")
+        return ax  # Retourne le dernier ax utilisé
 
 
 
 
 
-
-
-
-
-import ast
-import os
-import numpy as np
-import matplotlib.pyplot as plt
 
 def plot_final_loss_and_rescalings(df, df_rescale, experiment_name):
     if df.empty:
@@ -753,17 +636,37 @@ def plot_final_loss_and_rescalings(df, df_rescale, experiment_name):
         if not df_path.empty:
             data_cf = sorted(df_path["compression_factor"].unique())
             data = [df_path[df_path["compression_factor"] == cf]["max_rescaling"].values for cf in data_cf]
-            print(data)
 
+            # 1. Dessiner le boxplot avec une largeur suffisante
             bp = ax_rescale.boxplot(
-                data, positions=data_cf, widths=0.35, 
-                patch_artist=True, showfliers=True, manage_ticks=False, zorder=2
+                data,
+                positions=data_cf,
+                widths=0.4, # On augmente un peu la largeur
+                patch_artist=True,
+                showfliers=False, # On cache les outliers car on va dessiner TOUS les points
+                manage_ticks=False,
+                zorder=2
             )
 
+            # Style des boîtes
             for box in bp['boxes']:
-                box.set(facecolor="#d95f02", alpha=0.35, edgecolor="black", linewidth=0.8)
+                box.set(facecolor="#d95f02", alpha=0.3, edgecolor="black", linewidth=0.8)
             for median in bp['medians']:
                 median.set(color="black", linewidth=1.5)
+
+            # 2. AJOUT : Jittering (dessiner les points individuels)
+            for i, cf in enumerate(data_cf):
+                y = data[i]
+                # On crée un décalage horizontal aléatoire (jitter)
+                x = np.random.normal(cf, 0.04, size=len(y)) 
+                ax_rescale.scatter(
+                    x, y, 
+                    alpha=0.5, 
+                    s=10, 
+                    color="#d95f02", 
+                    edgecolor="none",
+                    zorder=3
+                )
 
         ax_rescale.set_xlabel("Compression Factor")
         ax_rescale.set_ylabel(r"$\|\log(\text{rescaling})\|_\infty$") # Version simplifiée ou la tienne
@@ -786,32 +689,160 @@ def plot_final_loss_and_rescalings(df, df_rescale, experiment_name):
         plt.close(fig)
 
 
+
+
+
+
+
+
+
+from matplotlib.patches import Rectangle, ConnectionPatch
+
+from matplotlib.patches import Rectangle, ConnectionPatch
+import numpy as np
+
+def plot_master_zoom_panel(df, lr_val, target_depth_str, target_metric, metrics, target_value, experiment_name, methods):
+    n_right = len(metrics)
+    # Ratio : la vue d'ensemble à gauche est légèrement plus large
+    width_ratios = [1.5] + [1] * n_right
+    fig, axes = plt.subplots(1, 1 + n_right, figsize=(4 * (1 + n_right), 4.5), 
+                             gridspec_kw={'width_ratios': width_ratios})
+    
+    ax_left = axes[0]
+    axes_right = axes[1:]
+
+    # 1. Génération des graphiques
+    plot_convergence_speed_vs_depth(
+        df, target_value=target_value, lrs_to_plot=[lr_val], 
+        ax=ax_left, experiment_name=experiment_name, target_metric=target_metric
+    )
+    
+    plot_multi_metrics_per_lr_same_fig(
+        df, metrics_to_plot=metrics, lrs_to_plot=[lr_val], 
+        archs_to_plot=[target_depth_str], methods_to_plot=methods, 
+        ax=axes_right
+    )
+
+    # 2. DÉFINIR LE CARRÉ DE ZOOM
+    x_center = get_depth(target_depth_str)
+    
+    y_values = []
+    for line in ax_left.get_lines():
+        x_data = np.array(line.get_xdata())
+        y_data = np.array(line.get_ydata())
+        
+        # On utilise np.isclose au lieu de == pour éviter les erreurs de flottants
+        # et on vérifie que les données ne sont pas vides
+        if len(x_data) > 0:
+            idx = np.where(np.isclose(x_data, x_center))[0]
+            if len(idx) > 0:
+                val = y_data[idx[0]]
+                if np.isfinite(val): # Vérifie que ce n'est pas NaN ou Inf
+                    y_values.append(val)
+    
+    # Sécurité : si on ne trouve rien, on prend le milieu de l'échelle affichée
+    if len(y_values) > 0:
+        y_center = np.mean(y_values) - 0.08 * (ax_left.get_ylim()[1] - ax_left.get_ylim()[0]) # Légère correction vers le bas
+    else:
+        print(f"⚠️ Warning: No data found for depth {x_center} on ax_left. Using axis center.")
+        y_lims = ax_left.get_ylim()
+        y_center = (y_lims[0] + y_lims[1]) / 2
+
+    # --- Vérification finale avant création du rectangle ---
+    if not np.isfinite(y_center):
+        y_center = 0 # Valeur de secours ultime
+
+    # --- Paramètres du Rectangle ---
+    y_range = ax_left.get_ylim()[1] - ax_left.get_ylim()[0]
+    rect_w = 0.8  # Un peu moins de 1 pour ne pas coller aux autres points
+    rect_h = y_range * 0.5 # 30% de la hauteur totale
+
+    rect = Rectangle(
+        (x_center - rect_w/2, y_center - rect_h/2), rect_w, rect_h,
+        linewidth=1.2, edgecolor='gray', facecolor='none', 
+        linestyle='--', alpha=0.7, zorder=100
+    )
+    ax_left.add_patch(rect)
+
+# 3. TRACER LES LIGNES DE CONNEXION (Zoom effect)
+    common_style = dict(
+        coordsA="data", 
+        coordsB="axes fraction",
+        axesA=ax_left, 
+        axesB=axes_right[0], 
+        color="gray", 
+        linestyle="--", 
+        alpha=0.6,          # Un peu plus visible
+        linewidth=1.0,
+        zorder=100,         # VALEUR ÉLEVÉE pour passer devant les plots
+        clip_on=False       # IMPORTANT : permet de traverser l'espace entre les axes
+    )
+    # Ligne haute
+    con1 = ConnectionPatch(xyA=(x_center + rect_w/2, y_center + rect_h/2), xyB=(0, 1), **common_style)
+    # Ligne basse
+    con2 = ConnectionPatch(xyA=(x_center + rect_w/2, y_center - rect_h/2), xyB=(0, 0), **common_style)
+    
+    # On ajoute explicitement les artistes à la FIGURE et non aux axes
+    fig.add_artist(con1)
+    fig.add_artist(con2)
+
+    # 4. Nettoyage final pour ICML
+    if ax_left.get_legend():
+        ax_left.get_legend().remove()
+    
+    # On place une légende unique en bas centrée
+    handles, labels = axes_right[0].get_legend_handles_labels()
+    if handles:
+        fig.legend(handles, labels, loc='lower center', ncol=len(labels), 
+                   bbox_to_anchor=(0.5, -0.05), frameon=True, edgecolor='gray')
+
+    plt.tight_layout(rect=[0, 0.05, 1, 0.95])
+    
+    out_dir = _ensure_outdir(f"figures/combined/")
+    filename = f"{experiment_name}_zoom_panel.pdf"
+    plt.savefig(out_dir / filename, bbox_inches='tight')
+    plt.close(fig)
+    print(f"✅ Master Zoom Panel saved: {filename}")
+
+
+
+# if __name__ == "__main__":
+#     EXP_NAME = "PC_cifar10_FC_not_all_depth"
+#     # On récupère toutes les métriques nécessaires d'un coup
+#     METRICS = ["train_acc", "train_loss" ] 
+#     TARGET_LR = 0.001
+#     TARGET_DEPTH_STR = "[500, 500, 500]" # L'architecture pour le zoom
+#     THRESHOLD = 0.99
+    
+#     df_all = get_multiple_metrics_history_fast(EXP_NAME, metrics_list=METRICS)
+    
+#     if not df_all.empty:
+#         # 1. Tes plots individuels (Optionnel, si tu veux toujours les fichiers séparés)
+#         # plot_multi_metrics_per_lr_same_fig(...)
+#         # plot_convergence_speed_vs_depth(...)
+
+#         # 2. APPEL DU PANNEAU ZOOM (La nouvelle figure combinée pour ICML)
+#         print(f"Generating Master Zoom Panel for {TARGET_DEPTH_STR}...")
+        
+#         # On définit une fonction master qui appelle les deux autres sur la même figure
+#         plot_master_zoom_panel(
+#             df=df_all, 
+#             lr_val=TARGET_LR, 
+#             target_depth_str=TARGET_DEPTH_STR, 
+#             target_metric="train_acc",
+#             metrics = METRICS,
+#             target_value=THRESHOLD,
+#             experiment_name=EXP_NAME,
+#             methods=['bn_pathcond', 'bn_baseline', 'bn_enorm']
+#         )
+#     else:
+#         print("Aucune donnée récupérée.")
+
+
+
+
 if __name__ == "__main__":
     EXP_NAME = "PC_mnist_enc_dec_Encoder_decoder"
     df = get_multiple_metrics_history_fast(EXP_NAME, metrics_list=["train_loss"])
     df_rescale = get_multiple_metrics_history_fast("PC_mnist_enc_dec_Encoder_decoder_max_rescaling")
     plot_final_loss_and_rescalings(df, df_rescale, EXP_NAME)
-
-# if __name__ == "__main__":
-#     EXP_NAME = "PC_mnist_enc_dec_Encoder_decoder"
-#     METRICS = ["test_rec_loss", "train_loss"]
-    
-#     df_all = get_multiple_metrics_history_fast(EXP_NAME, metrics_list=METRICS)
-    
-#     if not df_all.empty:
-#         plot_multi_metrics_per_lr_same_fig(df_all, metrics_to_plot=METRICS, lrs_to_plot=[0.001, 0.01, 0.1], experiment_name=EXP_NAME, methods_to_plot=['pathcond', 'baseline'])
-#         #plot_best_acc_vs_depth(df_all, lrs_to_plot=[0.001], experiment_name=EXP_NAME)
-#     else:
-#         print("Aucune donnée récupérée pour l'expérience spécifiée.")
-
-
-
-
-# if __name__ == "__main__":
-#     EXP_NAME = "PC_cifar10_FC_not_all_depth" 
-#     target = 0.8
-#     name_target_metric = "train_acc"
-#     df_all = get_multiple_metrics_history_fast(EXP_NAME, metrics_list=[name_target_metric])
-    
-#     if not df_all.empty:
-#         plot_convergence_speed_vs_depth(df_all, target_metric=name_target_metric, target_value=target, lrs_to_plot=[0.001, 0.01, 0.1], experiment_name=EXP_NAME)
