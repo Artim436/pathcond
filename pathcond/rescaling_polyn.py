@@ -4,8 +4,8 @@ import torch.nn as nn
 from tqdm import tqdm
 from torch.nn.utils import parameters_to_vector, vector_to_parameters
 from torchvision.models.resnet import BasicBlock
-from pathcond.utils import iter_modules_by_type, count_hidden_channels_generic, _detect_model_type
-from pathcond.network_to_optim import compute_diag_G, compute_B_mlp, compute_B_cnn
+from pathcond.utils import iter_modules_by_type, count_hidden_channels_generic, _detect_model_type, count_hidden_channels_full_conv, count_hidden_channels_resnet_c
+from pathcond.network_to_optim import compute_diag_G, compute_B_mlp, compute_B_resnet, compute_B_full_conv, compute_B_resnet_c
 from torch import Tensor
 from typing import List, Tuple
 
@@ -138,7 +138,7 @@ def update_z_polynomial_enorm(
     return BZ, Z
 
 
-def optimize_rescaling_polynomial(model, n_iter=10, tol=1e-6, module_type=None, enorm=False) -> tuple[torch.Tensor, torch.Tensor]:
+def optimize_rescaling_polynomial(model, n_iter=10, tol=1e-6, resnet=False, enorm=False) -> tuple[torch.Tensor, torch.Tensor]:
     device = next(model.parameters()).device
     dtype = torch.double
     if enorm:
@@ -151,8 +151,14 @@ def optimize_rescaling_polynomial(model, n_iter=10, tol=1e-6, module_type=None, 
         n_hidden_neurons = sum(model.model[i].out_features for i in linear_indices[:-1])
         pos_cols, neg_cols = compute_B_mlp(model)
     elif model_type == "CNN":
-        n_hidden_neurons = count_hidden_channels_generic(model, module_type=module_type)
-        pos_cols, neg_cols = compute_B_cnn(model, module_type=module_type)
+        if not resnet:
+            n_hidden_neurons = count_hidden_channels_full_conv(model)
+            pos_cols, neg_cols = compute_B_full_conv(model)
+        else:
+            n_hidden_neurons = count_hidden_channels_resnet_c(model)
+            pos_cols, neg_cols = compute_B_resnet_c(model)
+    if pos_cols is None or neg_cols is None:
+        raise ValueError("pos_cols and neg_cols could not be computed.")
     if enorm:
         BZ, Z = update_z_polynomial_enorm(param_vector, pos_cols, neg_cols, n_iter, n_hidden_neurons, tol)
     else:
@@ -234,3 +240,43 @@ def reweight_model(model: nn.Module, BZ: torch.Tensor, Z: torch.Tensor = None, m
     return new_model
 
 
+def reweight_model_inplace(
+    model: nn.Module, 
+    BZ: torch.Tensor, 
+    enorm: bool = False
+) -> None:
+    """
+    Reweight a Pytorch model IN-PLACE .
+    Rescale les paramètres en utilisant BZ.
+    Ne prend pas en charge la rescaling des BatchNorm.
+    
+    Args:
+        model (nn.Module): Pytorch model.
+        BZ (torch.Tensor): log-rescaling vector de taille [n_params].
+        enorm (bool, optional): Whether to use equinorm reweighting.
+    
+    Returns:
+        None (modifications in-place)
+    """
+    
+    model.eval()
+    
+    # Detect device
+    device = next(model.parameters()).device
+    BZ = BZ.to(device)
+    
+    # Flatten parameters
+    param_vec = parameters_to_vector(model.parameters())
+    
+    assert BZ.shape == param_vec.shape, \
+        f"Size of BZ {BZ.shape} incompatible with {param_vec.shape}"
+    
+    # Apply standard parameter reweighting
+    if enorm:
+        reweighted_vec = param_vec * torch.exp(BZ)
+    else:
+        reweighted_vec = param_vec * torch.exp(-0.5 * BZ)
+    
+    # Copy back parameters IN-PLACE
+    with torch.no_grad():
+        vector_to_parameters(reweighted_vec, model.parameters())

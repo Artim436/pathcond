@@ -3,7 +3,7 @@ import torch.nn as nn
 from tqdm import tqdm
 from pathcond.utils import _param_start_offsets, split_sorted_by_column, get_model_input_size
 from torchvision.models.resnet import BasicBlock
-from pathcond.utils import count_hidden_channels_generic, iter_modules_by_type
+from pathcond.utils import count_hidden_channels_generic, iter_modules_by_type, count_hidden_channels_resnet_c, count_hidden_channels_full_conv
 
 
 class DoubleConv(nn.Module):
@@ -286,7 +286,7 @@ def compute_B_mlp(model: nn.Module):
     return pos_cols, neg_cols
 
 
-def compute_B_cnn(model: nn.Module, module_type=None):
+def compute_B_resnet(model: nn.Module, module_type=None):
     """
     Version sparse ultra-optimisée:
     Retourne pour chaque canal k de conv1 de chaque BasicBlock :
@@ -391,3 +391,322 @@ def compute_B_cnn(model: nn.Module, module_type=None):
     return pos_cols, neg_cols
 
 
+def compute_B_full_conv(model: nn.Module):
+    """
+    Version sparse ultra-optimisée pour CNN générique:
+    
+    Pour chaque paire de Conv2d consécutives (conv_i, conv_{i+1}):
+    - Les out_channels de conv_i forment des hidden channels
+    - Paramètres ENTRANTS (coefficient -1):
+      * conv_i.weight (tous les poids de sortie du canal)
+      * conv_i.bias (si existe)
+    - Paramètres SORTANTS (coefficient +1):
+      * conv_{i+1}.weight (tous les poids d'entrée du canal correspondant)
+    
+    Retourne:
+        pos_cols: liste de tenseurs, pos_cols[h] = indices où B[:,h] = +1
+        neg_cols: liste de tenseurs, neg_cols[h] = indices où B[:,h] = -1
+    """
+    starts, n_params = _param_start_offsets(model)
+    device = next(model.parameters()).device
+    
+    n_hidden = count_hidden_channels_full_conv(model)
+    
+    # Récupérer toutes les Conv2d dans l'ordre
+    conv_layers = []
+    for name, module in model.named_modules():
+        if isinstance(module, nn.Conv2d):
+            conv_layers.append(module)
+    
+    # Stockage des +1 et -1
+    pos_rows_all = []
+    pos_cols_all = []
+    neg_rows_all = []
+    neg_cols_all = []
+    
+    col = 0  # colonne courante (indice du hidden channel)
+    
+    # Parcourir toutes les paires consécutives
+    for idx in range(len(conv_layers) - 1):
+        conv1 = conv_layers[idx]
+        conv2 = conv_layers[idx + 1]
+        
+        o = conv1.out_channels  # nombre de hidden channels pour cette paire
+        i = conv1.in_channels
+        kH, kW = conv1.kernel_size
+        
+        # ----------- (1) conv1.weight -> -1 entrants -----------
+        # Forme: (out_channels, in_channels, kH, kW)
+        w1 = conv1.weight
+        w1_start, _ = starts[id(w1)]
+        
+        # Pour chaque canal de sortie k ∈ [0, o-1]:
+        # Tous les poids w1[k, :, :, :] sont entrants
+        base = torch.arange(o * i * kH * kW, device=device)
+        base = base.view(o, -1)  # (o, i*kH*kW)
+        rows_in = (w1_start + base).reshape(-1)
+        
+        # Chaque canal k a i*kH*kW poids entrants
+        cols_in = torch.repeat_interleave(
+            torch.arange(o, device=device), 
+            i * kH * kW
+        )
+        cols_in = cols_in + col
+        
+        neg_rows_all.append(rows_in)
+        neg_cols_all.append(cols_in)
+        
+        # ----------- (2) conv1.bias -> -1 si existe -----------
+        if conv1.bias is not None:
+            b1 = conv1.bias
+            b1_start, _ = starts[id(b1)]
+            rows_b1 = torch.arange(b1_start, b1_start + o, device=device)
+            cols_b1 = torch.arange(col, col + o, device=device)
+            
+            neg_rows_all.append(rows_b1)
+            neg_cols_all.append(cols_b1)
+        
+        # ----------- (3) conv2.weight -> +1 sortants -----------
+        # Forme: (out_channels2, in_channels2, kH2, kW2)
+        # in_channels2 devrait être égal à o (out_channels de conv1)
+        w2 = conv2.weight
+        o2, o_check, kH2, kW2 = w2.shape
+        assert o_check == o, f"Mismatch: conv1.out_channels={o} != conv2.in_channels={o_check}"
+        
+        w2_start, _ = starts[id(w2)]
+        
+        # Pour chaque canal k ∈ [0, o-1]:
+        # Tous les poids w2[:, k, :, :] sont sortants
+        base2 = torch.arange(o2 * o * kH2 * kW2, device=device)
+        base2 = base2.view(o2, o, -1)  # (o2, o, kH2*kW2)
+        rows_out = (w2_start + base2).reshape(-1)
+        
+        # Chaque canal k apparaît kH2*kW2 fois pour chaque out_channel de conv2
+        cols_out = torch.arange(o, device=device).repeat_interleave(kH2 * kW2)
+        cols_out = cols_out.repeat(o2) + col
+        
+        pos_rows_all.append(rows_out)
+        pos_cols_all.append(cols_out)
+        
+        col += o  # avancer de o hidden channels
+    
+    # Fusionner tous les +1 et -1
+    pos_rows_all = torch.cat(pos_rows_all)
+    pos_cols_all = torch.cat(pos_cols_all)
+    neg_rows_all = torch.cat(neg_rows_all)
+    neg_cols_all = torch.cat(neg_cols_all)
+    
+    # Trier par colonnes
+    neg_cols_all, idx = torch.sort(neg_cols_all)
+    neg_rows_all = neg_rows_all[idx]
+    pos_cols_all, idx = torch.sort(pos_cols_all)
+    pos_rows_all = pos_rows_all[idx]
+    
+    # Séparer par colonne
+    pos_cols = split_sorted_by_column(pos_cols_all, pos_rows_all, n_hidden)
+    neg_cols = split_sorted_by_column(neg_cols_all, neg_rows_all, n_hidden)
+    
+    return pos_cols, neg_cols
+
+
+def compute_B_resnet_c(model):
+    """
+    Version optimisée pour ResNet type C selon la structure de rescaling:
+    
+    Pour chaque bloc k:
+    1. LEFT-RESCALING (entre bloc k-1 et bloc k):
+       - Divise les poids ENTRANTS de Conv1 et ConvSkip du bloc k
+       - Multiplie les poids SORTANTS de Conv2 et ConvSkip du bloc k-1
+    
+    2. INTERNAL RESCALING (dans le bloc k, entre Conv1 et Conv2):
+       - Divise les poids SORTANTS de Conv1
+       - Multiplie les poids ENTRANTS de Conv2
+    
+    3. RIGHT-RESCALING (entre bloc k et bloc k+1):
+       - Divise les poids SORTANTS de Conv2 et ConvSkip du bloc k
+       - Multiplie les poids ENTRANTS de Conv1 et ConvSkip du bloc k+1
+    
+    Structure:
+        bloc k-1 → [LEFT α] → Conv1 → [INTERNAL β] → Conv2 → 
+                                 ↓                      ↓
+                            [LEFT α] → ConvSkip →  (+) → [RIGHT γ] → bloc k+1
+    
+    Retourne:
+        pos_cols: liste de tenseurs, pos_cols[h] = indices où B[:,h] = +1
+        neg_cols: liste de tenseurs, neg_cols[h] = indices où B[:,h] = -1
+    """
+    starts, n_params = _param_start_offsets(model)
+    device = next(model.parameters()).device
+    
+    n_hidden = count_hidden_channels_resnet_c(model)
+    
+    # Stockage des +1 et -1
+    pos_rows_all = []
+    pos_cols_all = []
+    neg_rows_all = []
+    neg_cols_all = []
+    
+    col = 0  # colonne courante
+    
+    def add_conv_weights(conv, sign, col_offset, starts, device):
+        """Ajoute les poids d'une conv avec le signe donné"""
+        rows_list = []
+        cols_list = []
+        
+        w = conv.weight
+        o, i, kH, kW = w.shape
+        w_start, _ = starts[id(w)]
+        
+        if sign == -1:  # Entrants: tous les poids pour chaque canal de sortie
+            base = torch.arange(o * i * kH * kW, device=device).view(o, -1)
+            rows = (w_start + base).reshape(-1)
+            cols = torch.repeat_interleave(torch.arange(o, device=device), i * kH * kW) + col_offset
+        else:  # Sortants: tous les poids pour chaque canal d'entrée
+            base = torch.arange(o * i * kH * kW, device=device).view(o, i, -1)
+            rows = (w_start + base).reshape(-1)
+            cols = torch.arange(i, device=device).repeat_interleave(kH * kW).repeat(o) + col_offset
+        
+        rows_list.append(rows)
+        cols_list.append(cols)
+        
+        # Bias si existe
+        if conv.bias is not None and sign == -1:  # Bias uniquement pour entrants
+            b_start, _ = starts[id(conv.bias)]
+            rows_list.append(torch.arange(b_start, b_start + o, device=device))
+            cols_list.append(torch.arange(col_offset, col_offset + o, device=device))
+        
+        return rows_list, cols_list
+    
+    # 1. Rescaling après conv1 initial
+    conv1_initial = model.conv1
+    o_init = conv1_initial.out_channels
+    
+    # conv1.weight et bias → -1 (entrants)
+    rows_list, cols_list = add_conv_weights(conv1_initial, -1, col, starts, device)
+    neg_rows_all.extend(rows_list)
+    neg_cols_all.extend(cols_list)
+    
+    # Sortants: layer1.0.conv1 et layer1.0.shortcut
+    first_block = model.layer1[0]
+    rows_list, cols_list = add_conv_weights(first_block.conv1, +1, col, starts, device)
+    pos_rows_all.extend(rows_list)
+    pos_cols_all.extend(cols_list)
+    
+    rows_list, cols_list = add_conv_weights(first_block.shortcut[0], +1, col, starts, device)
+    pos_rows_all.extend(rows_list)
+    pos_cols_all.extend(cols_list)
+    
+    col += o_init
+    
+    # 2. Pour chaque bloc
+    all_blocks = []
+    for layer_name in ['layer1', 'layer2', 'layer3', 'layer4']:
+        layer = getattr(model, layer_name)
+        for block in layer:
+            all_blocks.append(block)
+    
+    for block_idx, block in enumerate(all_blocks):
+        conv1 = block.conv1
+        conv2 = block.conv2
+        shortcut = block.shortcut[0]
+        
+        # INTERNAL RESCALING: Conv1 → Conv2
+        o_internal = conv1.out_channels
+        
+        # conv1.weight et bias → -1 (sortants pour ce rescaling)
+        w1 = conv1.weight
+        o1, i1, kH1, kW1 = w1.shape
+        w1_start, _ = starts[id(w1)]
+        base = torch.arange(o1 * i1 * kH1 * kW1, device=device).view(o1, -1)
+        rows = (w1_start + base).reshape(-1)
+        cols = torch.repeat_interleave(torch.arange(o1, device=device), i1 * kH1 * kW1) + col
+        neg_rows_all.append(rows)
+        neg_cols_all.append(cols)
+        
+        if conv1.bias is not None:
+            b1_start, _ = starts[id(conv1.bias)]
+            neg_rows_all.append(torch.arange(b1_start, b1_start + o1, device=device))
+            neg_cols_all.append(torch.arange(col, col + o1, device=device))
+        
+        # conv2.weight → +1 (entrants pour ce rescaling)
+        rows_list, cols_list = add_conv_weights(conv2, +1, col, starts, device)
+        pos_rows_all.extend(rows_list)
+        pos_cols_all.extend(cols_list)
+        
+        col += o_internal
+        
+        # RIGHT RESCALING: sortie du bloc → bloc suivant (sauf dernier bloc)
+        if block_idx < len(all_blocks) - 1:
+            o_right = conv2.out_channels
+            
+            # conv2.weight et shortcut.weight → -1 (sortants)
+            w2 = conv2.weight
+            o2, i2, kH2, kW2 = w2.shape
+            w2_start, _ = starts[id(w2)]
+            base = torch.arange(o2 * i2 * kH2 * kW2, device=device).view(o2, -1)
+            rows = (w2_start + base).reshape(-1)
+            cols = torch.repeat_interleave(torch.arange(o2, device=device), i2 * kH2 * kW2) + col
+            neg_rows_all.append(rows)
+            neg_cols_all.append(cols)
+            
+            if conv2.bias is not None:
+                b2_start, _ = starts[id(conv2.bias)]
+                neg_rows_all.append(torch.arange(b2_start, b2_start + o2, device=device))
+                neg_cols_all.append(torch.arange(col, col + o2, device=device))
+            
+            # shortcut.weight → -1 (sortants)
+            w_skip = shortcut.weight
+            o_skip, i_skip, kH_skip, kW_skip = w_skip.shape
+            w_skip_start, _ = starts[id(w_skip)]
+            base = torch.arange(o_skip * i_skip * kH_skip * kW_skip, device=device).view(o_skip, -1)
+            rows = (w_skip_start + base).reshape(-1)
+            cols = torch.repeat_interleave(torch.arange(o_skip, device=device), i_skip * kH_skip * kW_skip) + col
+            neg_rows_all.append(rows)
+            neg_cols_all.append(cols)
+            
+            if shortcut.bias is not None:
+                b_skip_start, _ = starts[id(shortcut.bias)]
+                neg_rows_all.append(torch.arange(b_skip_start, b_skip_start + o_skip, device=device))
+                neg_cols_all.append(torch.arange(col, col + o_skip, device=device))
+            
+            # Bloc suivant: conv1 et shortcut → +1 (entrants)
+            next_block = all_blocks[block_idx + 1]
+            rows_list, cols_list = add_conv_weights(next_block.conv1, +1, col, starts, device)
+            pos_rows_all.extend(rows_list)
+            pos_cols_all.extend(cols_list)
+            
+            rows_list, cols_list = add_conv_weights(next_block.shortcut[0], +1, col, starts, device)
+            pos_rows_all.extend(rows_list)
+            pos_cols_all.extend(cols_list)
+            
+            col += o_right
+    
+    # Fusionner tous les +1 et -1
+    if len(pos_rows_all) > 0:
+        pos_rows_all = torch.cat(pos_rows_all)
+        pos_cols_all = torch.cat(pos_cols_all)
+    else:
+        pos_rows_all = torch.tensor([], dtype=torch.long, device=device)
+        pos_cols_all = torch.tensor([], dtype=torch.long, device=device)
+    
+    if len(neg_rows_all) > 0:
+        neg_rows_all = torch.cat(neg_rows_all)
+        neg_cols_all = torch.cat(neg_cols_all)
+    else:
+        neg_rows_all = torch.tensor([], dtype=torch.long, device=device)
+        neg_cols_all = torch.tensor([], dtype=torch.long, device=device)
+    
+    # Trier par colonnes
+    if len(neg_cols_all) > 0:
+        neg_cols_all, idx = torch.sort(neg_cols_all)
+        neg_rows_all = neg_rows_all[idx]
+    
+    if len(pos_cols_all) > 0:
+        pos_cols_all, idx = torch.sort(pos_cols_all)
+        pos_rows_all = pos_rows_all[idx]
+    
+    # Séparer par colonne
+    pos_cols = split_sorted_by_column(pos_cols_all, pos_rows_all, n_hidden)
+    neg_cols = split_sorted_by_column(neg_cols_all, neg_rows_all, n_hidden)
+    
+    return pos_cols, neg_cols

@@ -6,199 +6,8 @@ from torch.nn.utils import parameters_to_vector, vector_to_parameters
 from torch.nn import init
 import numpy as np
 import torchvision.models as models
-
-
-class MNISTMLP(nn.Module):
-    def __init__(self, d_hidden1=256, d_hidden2=128, seed=0):
-        super().__init__()
-        torch.manual_seed(seed)
-
-        self.d_hidden1 = d_hidden1
-        self.d_hidden2 = d_hidden2
-
-        self.model = nn.Sequential(
-            nn.Linear(784, d_hidden1),
-            nn.ReLU(),
-            nn.Linear(d_hidden1, d_hidden2),
-            nn.ReLU(),
-            nn.Linear(d_hidden2, 10),
-        )
-
-    def forward(self, x):
-        x = x.view(x.size(0), -1)
-        return self.model(x)
-
-
-    def forward_squared(self, x, device='cpu'):
-        ''' Forward by applying the rule "Linear -> weights**2, bias**2" '''
-        x = x.to(device)
-        x = x.view(x.size(0), -1)
-        for layer in self.model:
-            if isinstance(layer, nn.Linear):
-                W = layer.weight ** 2
-                b = layer.bias ** 2 if layer.bias is not None else None
-                x = F.linear(x, W, b)
-            else:
-                x = layer(x)
-        return x
-
-class Moons_MLP(nn.Module):
-    """MLP for two moons (2 -> 32 -> 32 -> 1)."""
-    def __init__(self, d_hidden1: int = 32, d_hidden2: int = 32, seed: int = 0):
-        super(Moons_MLP, self).__init__()
-        torch.manual_seed(seed)
-
-        self.d_hidden1 = d_hidden1
-        self.d_hidden2 = d_hidden2
-
-        self.model = nn.Sequential(
-            nn.Linear(2, d_hidden1, bias=True),
-            nn.ReLU(),
-            nn.Linear(d_hidden1, d_hidden2, bias=True),
-            nn.ReLU(),
-            nn.Linear(d_hidden2, 2, bias=False),
-        )
-
-    def forward(self, x):
-        x = x.view(x.size(0), -1)
-        return self.model(x)      
-
-    def forward_squared(self, x, device='cpu'):
-        ''' Forward by applying the rule "Linear -> weights**2, bias**2" '''
-        x = x.to(device)
-        x = x.view(x.size(0), -1)
-        for layer in self.model:
-            if isinstance(layer, nn.Linear):
-                W = layer.weight ** 2
-                b = layer.bias ** 2 if layer.bias is not None else None
-                x = F.linear(x, W, b)
-            else:
-                x = layer(x)
-        return x
-    
-    def init__weights_normal(self, mean=0.0, std=0.02, seed=0):
-        torch.manual_seed(seed)
-        for m in self.model.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.normal_(m.weight, mean=mean, std=std)
-                if m.bias is not None:
-                    nn.init.zeros_(m.bias)
-    
-class Moons_MLP_unbalanced(nn.Module):
-    """MLP for two moons (2 -> 32 -> 32 -> 1)."""
-    def __init__(self, d_hidden1: int = 32, d_hidden2: int = 32, seed: int = 0):
-        super(Moons_MLP_unbalanced, self).__init__()
-        torch.manual_seed(seed)
-
-        self.d_hidden1 = d_hidden1
-        self.d_hidden2 = d_hidden2
-
-        self.model = nn.Sequential(
-            nn.Linear(2, d_hidden1, bias=True),
-            nn.ReLU(),
-            nn.Linear(d_hidden1, d_hidden2, bias=True),
-            nn.ReLU(),
-            nn.Linear(d_hidden2, d_hidden1, bias=True),
-            nn.ReLU(),
-            nn.Linear(d_hidden1, d_hidden2, bias=True),
-            nn.ReLU(),
-            nn.Linear(d_hidden2, d_hidden1, bias=True),
-            nn.ReLU(),
-            nn.Linear(d_hidden1, 2, bias=False),
-        )
-
-    def forward(self, x, device='cpu'):
-        x = x.to(device)
-        x = x.view(x.size(0), -1)
-        return self.model(x)
-
-    def forward_squared(self, x, device='cpu'):
-        ''' Forward by applying the rule "Linear -> weights**2, bias**2" '''
-        x = x.to(device)
-        x = x.view(x.size(0), -1)
-        for layer in self.model:
-            if isinstance(layer, nn.Linear):
-                W = layer.weight ** 2
-                b = layer.bias ** 2 if layer.bias is not None else None
-                x = F.linear(x, W, b)
-            else:
-                x = layer(x)
-        return x
-    
-
-   
-class toy_MLP(nn.Module):
-    """Toy MLP for testing (10 -> 32 -> 1)."""
-    def __init__(self, d_input: int = 2, d_hidden1: int = 2, seed: int = 0, teacher_init: bool = False):
-        super(toy_MLP, self).__init__()
-        torch.manual_seed(seed)
-
-        self.d_hidden1 = d_hidden1
-        self.d_input = d_input
-
-        self.model = nn.Sequential(
-            nn.Linear(d_input, d_hidden1, bias=True),
-            nn.ReLU(),
-            nn.Linear(d_hidden1, 1, bias=False),
-        )
-        if teacher_init:
-            self._init_teacher_weights()
-
-    def forward(self, x, device='cpu', return_activations: bool = False):
-        z1 = self.model[0](x).to(device)  # pré-activation (avant ReLU)
-        a1 = self.model[1](z1).to(device)  # activation (après ReLU)
-        out = self.model[2](a1).to(device)  # sortie du modèle
-        if return_activations:
-            return out, a1
-        else:
-            return out
-
-    def forward_squared(self, x, device='cpu'):
-        ''' Forward by applying the rule "Linear -> weights**2, bias**2" '''
-        x = x.to(device)
-        x = x.view(x.size(0), -1)
-        for layer in self.model:
-            if isinstance(layer, nn.Linear):
-                W = layer.weight ** 2
-                b = layer.bias ** 2 if layer.bias is not None else None
-                x = F.linear(x, W, b)
-            else:
-                x = layer(x)
-        return x
-
-    def _init_teacher_weights(self):
-        # mean of inputs
-        with torch.no_grad():
-            W1 = torch.zeros_like(self.model[0].weight)
-            for i in range(min(self.d_input, self.d_hidden1)):
-                W1[i, i] = 1.0
-            self.model[0].weight.copy_(W1)
-            self.model[0].bias.fill_(0.0)
-
-            W2 = torch.zeros_like(self.model[2].weight)
-            for i in range(self.d_hidden1):
-                W2[0, i] = 1.0 / self.d_hidden1
-            self.model[2].weight.copy_(W2)
-    
-    def get_mean_weights(self):
-        with torch.no_grad():
-            W1 = self.model[0].weight
-            W2 = self.model[2].weight
-            bias = self.model[0].bias
-            mean_W1 = W1.mean().item()
-            mean_W2 = W2.mean().item()
-            mean_bias = bias.mean().item() if bias is not None else 0.0
-        return mean_W1, mean_W2, mean_bias
-    
-    def get_weights(self):
-        with torch.no_grad():
-            W1 = self.model[0].weight.clone().detach()
-            W2 = self.model[2].weight.clone().detach()
-            bias = self.model[0].bias.clone().detach() if self.model[0].bias is not None else None
-        return W1, W2, bias
-
-    def get_weights_as_vector(self):
-        return parameters_to_vector(self.parameters())
+from typing import List
+from collections import OrderedDict
 
 
 class MLP(nn.Sequential):
@@ -228,76 +37,291 @@ class MLP(nn.Sequential):
         self.model = nn.Sequential(*layers)
 
     def forward(self, x):
+        if x.dim() > 2:
+            x = x.view(x.size(0), -1)
+        return self.model(x)
+
+
+class MLP_BN(nn.Sequential):
+    def __init__(self, hidden_dims: List[int], seed: int = 0) -> None:
+        super().__init__()
+        torch.manual_seed(seed)
+        
+        input_dim = hidden_dims[0]
+        output_dim = hidden_dims[-1]
+        hidden_dims_list = hidden_dims[1:-1]
+
+        layers = OrderedDict()
+        prev = input_dim
+
+        for i, h in enumerate(hidden_dims_list):
+            # Ajout de noms explicites : 'lin', 'bn', 'relu'
+            layers[f"lin{i}"] = nn.Linear(prev, h, bias=False)
+            layers[f"bn{i}"] = nn.BatchNorm1d(h) # "bn" est maintenant dans le nom
+            layers[f"relu{i}"] = nn.ReLU()
+            prev = h
+
+        layers["output"] = nn.Linear(prev, output_dim, bias=True)
+
+        # On passe l'OrderedDict au constructeur de nn.Sequential
+        self.model = nn.Sequential(layers)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if x.dim() > 2:
+            x = x.view(x.size(0), -1)
         return self.model(x)
     
 
-def apply_init(model: nn.Module, scheme: str, gain: float = None, a=0.05, std=0.02, seed=0) -> None:
-    """
-    scheme in {"xavier_uniform", "xavier_normal", "kaiming_uniform", "kaiming_normal",
-              "uniform", "normal", "zeros", "orthogonal"}
-    """
-    torch.manual_seed(seed)
-    for m in model.modules():
-        if isinstance(m, nn.Linear):
-            if scheme == "xavier_uniform":
-                nn.init.xavier_uniform_(m.weight, gain=gain if gain is not None else 1.0)
-                if m.bias is not None:
-                    fan_in, _ = init._calculate_fan_in_and_fan_out(m.weight)
-                    bound = 1 / np.sqrt(fan_in) if fan_in > 0 else 0
-                    init.uniform_(m.bias, -bound, bound)
-            elif scheme == "xavier_normal":
-                nn.init.xavier_normal_(m.weight, gain=gain if gain is not None else 1.0)
-                if m.bias is not None:
-                    fan_in, _ = init._calculate_fan_in_and_fan_out(m.weight)
-                    bound = 1 / np.sqrt(fan_in) if fan_in > 0 else 0
-                    init.uniform_(m.bias, -bound, bound)
-            elif scheme == "kaiming_uniform":
-                nn.init.kaiming_uniform_(m.weight, nonlinearity="relu")
-                if m.bias is not None:
-                    fan_in, _ = init._calculate_fan_in_and_fan_out(m.weight)
-                    bound = 1 / np.sqrt(fan_in) if fan_in > 0 else 0
-                    init.uniform_(m.bias, -bound, bound)
-            elif scheme == "kaiming_normal":
-                nn.init.kaiming_normal_(m.weight, nonlinearity="relu")
-                if m.bias is not None:
-                    fan_in, _ = init._calculate_fan_in_and_fan_out(m.weight)
-                    bound = 1 / np.sqrt(fan_in) if fan_in > 0 else 0
-                    init.uniform_(m.bias, -bound, bound)
-            elif scheme == "uniform":
-                nn.init.uniform_(m.weight, a=-a, b=a)
-                if m.bias is not None:
-                    fan_in, _ = init._calculate_fan_in_and_fan_out(m.weight)
-                    bound = 1 / np.sqrt(fan_in) if fan_in > 0 else 0
-                    init.uniform_(m.bias, -bound, bound)
-            elif scheme == "normal":
-                nn.init.normal_(m.weight, mean=0.0, std=std)
-                if m.bias is not None:
-                    nn.init.normal_(m.bias, mean=0.0, std=std)
-            elif scheme == "normal_wide":
-                nn.init.normal_(m.weight, mean=0.0, std=std*5)
-                if m.bias is not None:
-                    nn.init.normal_(m.bias, mean=0.0, std=std*5)
-            elif scheme == "default":
-                pass  # laisse les poids tels quels
-            elif scheme == "orthogonal":
-                nn.init.orthogonal_(m.weight, gain=gain if gain is not None else 1.0)
-                if m.bias is not None:
-                    nn.init.orthogonal_(m.bias, gain=gain if gain is not None else 1.0)
-            elif scheme == "ones":
-                nn.init.ones_(m.weight)
-                if m.bias is not None:
-                    nn.init.ones_(m.bias)
-            elif scheme == "twos":
-                nn.init.constant_(m.weight, 2.0)
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 2.0)
-            elif scheme == "constant_0.5":
-                nn.init.constant_(m.weight, 0.5)
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0.5)
-            else:
-                raise ValueError(f"Schéma d'init inconnu: {scheme}")
 
+## FUll conv pierre stock
+
+class FullyConvolutional(nn.Module):
+    """
+    Fully convolutional architecture for cifar10 datset as described in
+    Gitman et al., 'Comparison of Batch Normalization and Weight Normalization
+    Algorithms for the Large-scale Image Classification'.
+    """
+
+    def __init__(self, bias=False):
+        super(FullyConvolutional, self).__init__()
+        # first block
+        self.conv1 = nn.Conv2d(3, 128, 3, 1, 1, bias=bias)
+        self.conv2 = nn.Conv2d(128, 128, 3, 1, 1, bias=bias)
+        self.conv3 = nn.Conv2d(128, 128, 3, 1, 1, bias=bias)
+        self.pool1 = nn.MaxPool2d(3, 2, 1)
+        # second block
+        self.conv4 = nn.Conv2d(128, 256, 3, 1, 1, bias=bias)
+        self.conv5 = nn.Conv2d(256, 256, 3, 1, 1, bias=bias)
+        self.conv6 = nn.Conv2d(256, 256, 3, 1, 1, bias=bias)
+        self.pool2 = nn.MaxPool2d(3, 2, 1)
+        # third block
+        self.conv7 = nn.Conv2d(256, 320, 3, 1, 1, bias=bias)
+        self.conv8 = nn.Conv2d(320, 320, 1, 1, 0, bias=bias)
+        self.conv9 = nn.Conv2d(320, 10, 1, 1, 0, bias=bias)
+        self.pool3 = nn.AvgPool2d(8)
+        # relu
+        self.relu = nn.ReLU()
+        # batch norm
+        self.bn1 = nn.BatchNorm2d(128)
+        self.bn2 = nn.BatchNorm2d(256)
+        # reset parameters
+        # self.reset_parameters()
+
+    # def reset_parameters(self):
+    #     for m in self.modules():
+    #         if isinstance(m, nn.Conv2d):
+    #             nn.init.kaiming_normal_(m.weight)
+
+    def forward(self, x):
+        x = self.relu(self.conv1(x))
+        x = self.relu(self.conv2(x))
+        x = self.conv3(x)
+        x = self.bn1(x)
+        x = self.pool1(self.relu(x))
+
+        x = self.relu(self.conv4(x))
+        x = self.relu(self.conv5(x))
+        x = self.conv6(x)
+        x = self.bn2(x)
+        x = self.pool2(self.relu(x))
+
+        x = self.relu(self.conv7(x))
+        x = self.relu(self.conv8(x))
+        x = self.conv9(x)
+        x = self.pool3(self.relu(x))
+
+        return x.flatten(1)
+
+
+class FullyConvolutional_without_bn(nn.Module):
+    """
+    Fully convolutional architecture for cifar10 datset as described in
+    Gitman et al., 'Comparison of Batch Normalization and Weight Normalization
+    Algorithms for the Large-scale Image Classification'.
+    """
+
+    def __init__(self, bias=False):
+        super(FullyConvolutional_without_bn, self).__init__()
+        # first block
+        self.conv1 = nn.Conv2d(3, 128, 3, 1, 1, bias=bias)
+        self.conv2 = nn.Conv2d(128, 128, 3, 1, 1, bias=bias)
+        self.conv3 = nn.Conv2d(128, 128, 3, 1, 1, bias=bias)
+        self.pool1 = nn.MaxPool2d(3, 2, 1)
+        # second block
+        self.conv4 = nn.Conv2d(128, 256, 3, 1, 1, bias=bias)
+        self.conv5 = nn.Conv2d(256, 256, 3, 1, 1, bias=bias)
+        self.conv6 = nn.Conv2d(256, 256, 3, 1, 1, bias=bias)
+        self.pool2 = nn.MaxPool2d(3, 2, 1)
+        # third block
+        self.conv7 = nn.Conv2d(256, 320, 3, 1, 1, bias=bias)
+        self.conv8 = nn.Conv2d(320, 320, 1, 1, 0, bias=bias)
+        self.conv9 = nn.Conv2d(320, 10, 1, 1, 0, bias=bias)
+        self.pool3 = nn.AvgPool2d(8)
+        # relu
+        self.relu = nn.ReLU()
+        # batch norm
+        # reset parameters
+        # self.reset_parameters()
+
+    # def reset_parameters(self):
+    #     for m in self.modules():
+    #         if isinstance(m, nn.Conv2d):
+    #             nn.init.kaiming_normal_(m.weight)
+
+    def forward(self, x):
+        x = self.relu(self.conv1(x))
+        x = self.relu(self.conv2(x))
+        x = self.conv3(x)
+        x = self.pool1(self.relu(x))
+
+        x = self.relu(self.conv4(x))
+        x = self.relu(self.conv5(x))
+        x = self.conv6(x)
+        x = self.pool2(self.relu(x))
+
+        x = self.relu(self.conv7(x))
+        x = self.relu(self.conv8(x))
+        x = self.conv9(x)
+        x = self.pool3(self.relu(x))
+
+        return x.flatten(1)
+    
+
+
+class BasicBlock(nn.Module):
+    """
+    Bloc résiduel basique pour ResNet-18
+    Utilise toujours une convolution 1x1 pour le shortcut (Type C)
+    """
+    expansion = 1
+    
+    def __init__(self, in_channels, out_channels, stride=1):
+        super(BasicBlock, self).__init__()
+        
+        # Première convolution 3x3
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, 
+                               stride=stride, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        
+        # Deuxième convolution 3x3
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3,
+                               stride=1, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        
+        self.relu = nn.ReLU(inplace=True)
+        
+        # Type C: TOUJOURS utiliser une convolution 1x1 pour le shortcut
+        # Même quand in_channels == out_channels et stride == 1
+        self.shortcut = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=1, 
+                     stride=stride, bias=False),
+            nn.BatchNorm2d(out_channels)
+        )
+    
+    def forward(self, x):
+        identity = self.shortcut(x)
+        
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        
+        out = self.conv2(out)
+        out = self.bn2(out)
+        
+        out += identity
+        out = self.relu(out)
+        
+        return out
+
+
+class ResNet18TypeC(nn.Module):
+    """
+    ResNet-18 de type C selon (He et al., 2015b)
+    Tous les shortcuts utilisent des convolutions 1x1 apprises
+    """
+    def __init__(self, num_classes=1000):
+        super(ResNet18TypeC, self).__init__()
+        
+        self.in_channels = 64
+        
+        # Couche initiale (conv1)
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, 
+                               padding=3, bias=False)
+        self.bn1 = nn.BatchNorm2d(64)
+        self.relu = nn.ReLU(inplace=True)
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        
+        # Blocs résiduels
+        # ResNet-18: [2, 2, 2, 2] blocs par couche
+        self.layer1 = self._make_layer(64, 2, stride=1)
+        self.layer2 = self._make_layer(128, 2, stride=2)
+        self.layer3 = self._make_layer(256, 2, stride=2)
+        self.layer4 = self._make_layer(512, 2, stride=2)
+        
+        # Couche de classification
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.fc = nn.Linear(512, num_classes)
+        
+        # Initialisation des poids
+        # self._initialize_weights()
+    
+    def _make_layer(self, out_channels, num_blocks, stride):
+        """Crée une couche avec plusieurs blocs résiduels"""
+        layers = []
+        
+        # Premier bloc avec potentiellement stride > 1
+        layers.append(BasicBlock(self.in_channels, out_channels, stride))
+        self.in_channels = out_channels
+        
+        # Blocs suivants
+        for _ in range(1, num_blocks):
+            layers.append(BasicBlock(self.in_channels, out_channels, stride=1))
+        
+        return nn.Sequential(*layers)
+    
+    def _initialize_weights(self):
+        """Initialise les poids selon la méthode de He et al."""
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', 
+                                       nonlinearity='relu')
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+    
+    def forward(self, x):
+        # Couche initiale
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+        
+        # Blocs résiduels
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+        
+        # Classification
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)
+        x = self.fc(x)
+        
+        return x
+    
+def resnet18_c_cifar10(num_classes=10, seed: int = 0) -> nn.Module:
+    # Load normal ResNet-18
+    torch.manual_seed(seed)
+    model = ResNet18TypeC(num_classes=num_classes)
+
+    # Replace first conv: 7x7 stride 2 → 3x3 stride 1, and adapt to 3 channels
+    model.conv1 = nn.Conv2d(
+        3, 64, kernel_size=3, stride=1, padding=1, bias=False
+    )
+    # Remove maxpool (too destructive for 32x32)
+    model.maxpool = nn.Identity()
+
+    return model
 
 
 def resnet18_mnist(num_classes=10, seed: int = 0) -> nn.Module:

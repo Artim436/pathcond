@@ -106,6 +106,83 @@ def count_hidden_channels_generic(model, module_type=None) -> int:
 
     return total_channels
 
+def count_hidden_channels_full_conv(model) -> int:
+    """
+    Compte le nombre de hidden channels dans un CNN.
+    
+    
+    On compte simplement les out_channels de chaque Conv2d 
+    sauf la dernière couche.
+    """
+    
+    # Extraire toutes les couches Conv2d dans l'ordre
+    conv_layers = []
+    for name, module in model.named_modules():
+        if isinstance(module, nn.Conv2d):
+            conv_layers.append({
+                'name': name,
+                'module': module,
+                'out_channels': module.out_channels,
+                'in_channels': module.in_channels
+            })
+
+    total_hidden = 0
+    
+    for i, conv in enumerate(conv_layers):
+        is_last = (i == len(conv_layers) - 1)
+        if not is_last:
+            total_hidden += conv['out_channels']
+ 
+    return total_hidden
+
+def count_hidden_channels_resnet_c(model) -> int:
+    """
+    Compte le nombre de hidden channels dans un ResNet de type C.
+    
+    Selon la méthode décrite dans le papier, pour chaque bloc k:
+    1. Left-rescaling: entre blocs k-1 et k (rescale l'entrée du bloc)
+    2. Internal rescaling: entre Conv1 et Conv2 du bloc k
+    3. Right-rescaling: entre blocs k et k+1 (rescale la sortie du bloc)
+    
+    Hidden channels:
+    - Entre bloc k-1 et bloc k: nombre de canaux en sortie du bloc k-1
+    - Entre Conv1 et Conv2 dans un bloc: out_channels de Conv1
+    
+    Total = (nombre de blocs + 1) rescalings inter-blocs + (nombre de blocs) rescalings internes
+    """
+    import torch.nn as nn
+    
+    total_hidden = 0
+    
+    # Extraire la structure des layers
+    layers = []
+    for name in ['layer1', 'layer2', 'layer3', 'layer4']:
+        if hasattr(model, name):
+            layer = getattr(model, name)
+            layers.append(layer)
+    
+    # 1. Rescaling après conv1 initial (avant layer1)
+    if hasattr(model, 'conv1'):
+        total_hidden += model.conv1.out_channels
+    
+    # 2. Pour chaque layer, compter les rescalings
+    for layer_idx, layer in enumerate(layers):
+        num_blocks = len(layer)
+        
+        for block_idx in range(num_blocks):
+            block = layer[block_idx]
+            
+            # Rescaling interne: entre conv1 et conv2 du bloc
+            if hasattr(block, 'conv1'):
+                total_hidden += block.conv1.out_channels
+            
+            # Rescaling entre blocs (sauf pour le dernier bloc de la dernière layer)
+            if not (layer_idx == len(layers) - 1 and block_idx == num_blocks - 1):
+                if hasattr(block, 'conv2'):
+                    total_hidden += block.conv2.out_channels
+    
+    return total_hidden
+
 
 
 def iter_modules_by_type(model, module_type):
