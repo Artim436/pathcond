@@ -164,15 +164,12 @@ def hessian_2(model, inputs):
     Returns:
         torch.Tensor: Hessienne de f.
     """
-    # Étape 1 : fonction scalaire
     def f(model, inputs):
         return model.forward_squared(inputs).sum()
 
-    # Étape 2 : premier gradient ∇f
     grad = torch.autograd.grad(f(model, inputs), model.parameters(), create_graph=True)
     grad_vec = torch.cat([g.contiguous().view(-1) for g in grad])
 
-    # Étape 3 : calcul ligne par ligne de la Hessienne
     hessian_rows = []
     print("Computing Hessian...")
     for i in tqdm(range(grad_vec.numel())):
@@ -180,7 +177,6 @@ def hessian_2(model, inputs):
         row = torch.cat([g.contiguous().view(-1) for g in grad2])
         hessian_rows.append(row)
 
-    # Étape 4 : empilement en matrice
     hessian = torch.stack(hessian_rows)
 
     return hessian
@@ -218,7 +214,6 @@ def compute_B_mlp(model: nn.Module):
     n_hidden = sum(layer.out_features for layer in linear_layers[:-1])
     device = next(model.parameters()).device
 
-    # On construit d'abord 2 grands vecteurs
     pos_rows_all = []
     pos_cols_all = []
     neg_rows_all = []
@@ -233,14 +228,12 @@ def compute_B_mlp(model: nn.Module):
 
         col_end = col_start + o
 
-        w0 = layer.weight        # [o, i]
+        w0 = layer.weight 
         w0_start, _ = starts[id(w0)]
 
-        # Lignes du bloc W0 : shape (o, i)
         rows_w0 = w0_start + (torch.arange(o, device=device)[:, None] * i
                               + torch.arange(i, device=device)[None, :])
 
-        # Colonnes du bloc : shape (o, i)
         cols_w0 = col_start + torch.arange(o, device=device)[:, None].expand(o, i)
 
         neg_rows_all.append(rows_w0.reshape(-1))
@@ -259,11 +252,9 @@ def compute_B_mlp(model: nn.Module):
         w1 = next_layer.weight
         w1_start, _ = starts[id(w1)]
 
-        # Lignes du bloc W1 : shape (o, on)
         rows_w1 = w1_start + torch.arange(o, device=device)[:, None] \
             + torch.arange(on, device=device)[None, :] * o
 
-        # Colonnes du bloc : shape (o, on)
         cols_w1 = col_start + torch.arange(o, device=device)[:, None].expand(o, on)
 
         pos_rows_all.append(rows_w1.reshape(-1))
@@ -271,17 +262,14 @@ def compute_B_mlp(model: nn.Module):
 
         col_start = col_end
 
-    # Concat uniques
     pos_rows_all = torch.cat(pos_rows_all)
     pos_cols_all = torch.cat(pos_cols_all)
     neg_rows_all = torch.cat(neg_rows_all)
     neg_cols_all = torch.cat(neg_cols_all)
-    neg_cols_all, idx = torch.sort(neg_cols_all)  # trier les colonnes négatives
+    neg_cols_all, idx = torch.sort(neg_cols_all) 
     neg_rows_all = neg_rows_all[idx]
 
-    # Maintenant on sépare par colonne (H colonnes)
-    # On veut : liste[t] = indices des rows où col == t
-    # pos_rows_all, pos_cols_all sont déjà triés !
+
     pos_cols = split_sorted_by_column(pos_cols_all, pos_rows_all, n_hidden)
     neg_cols = split_sorted_by_column(neg_cols_all, neg_rows_all, n_hidden)
 
@@ -304,7 +292,6 @@ def compute_B_resnet(model: nn.Module, module_type=None):
 
     n_hidden = count_hidden_channels_generic(model, module_type=module_type)
 
-    # On stocke tous les +1 et -1 sous forme (rows, cols)
     pos_rows_all = []
     pos_cols_all = []
     neg_rows_all = []
@@ -313,7 +300,6 @@ def compute_B_resnet(model: nn.Module, module_type=None):
     col = 0  
 
     for lname, block in iter_modules_by_type(model, module_type or BasicBlock):
-        # if 'DoubleConv' object has no attribute 'bn1'
         if not hasattr(block, 'bn1'):
             conv1, conv2 = block.conv1, block.conv2
             bn1 = None
@@ -326,13 +312,11 @@ def compute_B_resnet(model: nn.Module, module_type=None):
         w1 = conv1.weight
         w1_start, _ = starts[id(w1)]
 
-        # indices des poids entrants
         base = torch.arange(o * i * kH * kW, device=device)
-        base = base.view(o, -1)          # (o, i*kH*kW)
-        rows_in = (w1_start + base).reshape(-1)   # concat
+        base = base.view(o, -1)   
+        rows_in = (w1_start + base).reshape(-1)
         cols_in = torch.repeat_interleave(torch.arange(o, device=device), i * kH * kW)
 
-        # Décalage colonne
         cols_in = cols_in + col
 
         neg_rows_all.append(rows_in)
@@ -362,26 +346,23 @@ def compute_B_resnet(model: nn.Module, module_type=None):
         w2_start, _ = starts[id(w2)]
 
         base2 = torch.arange(o2 * o * kH2 * kW2, device=device)
-        base2 = base2.view(o2, o, -1)         # (o2, o, kH2*kW2)
+        base2 = base2.view(o2, o, -1)        
         rows_out = (w2_start + base2).reshape(-1)
 
-        # cols: chaque canal k répété kH2*kW2 fois, et répété pour chaque out_channel
         cols_out = torch.arange(o, device=device).repeat_interleave(kH2 * kW2)
         cols_out = cols_out.repeat(o2) + col
 
         pos_rows_all.append(rows_out)
         pos_cols_all.append(cols_out)
 
-        col += o  # on avance après ce bloc
-
-    # Fusionne tous les +1 et -1
+        col += o  
     pos_rows_all = torch.cat(pos_rows_all)
     pos_cols_all = torch.cat(pos_cols_all)
     neg_rows_all = torch.cat(neg_rows_all)
     neg_cols_all = torch.cat(neg_cols_all)
-    neg_cols_all, idx = torch.sort(neg_cols_all)  # trier les colonnes négatives
+    neg_cols_all, idx = torch.sort(neg_cols_all) 
     neg_rows_all = neg_rows_all[idx]
-    pos_cols_all, idx = torch.sort(pos_cols_all)  # trier les colonnes positives
+    pos_cols_all, idx = torch.sort(pos_cols_all)  
     pos_rows_all = pos_rows_all[idx]
     pos_cols = split_sorted_by_column(pos_cols_all, pos_rows_all, n_hidden)
     neg_cols = split_sorted_by_column(neg_cols_all, neg_rows_all, n_hidden)
@@ -407,34 +388,29 @@ def compute_B_full_conv(model: nn.Module):
         if isinstance(module, nn.Conv2d):
             conv_layers.append(module)
     
-    # Stockage des +1 et -1
     pos_rows_all = []
     pos_cols_all = []
     neg_rows_all = []
     neg_cols_all = []
     
-    col = 0  # colonne courante (indice du hidden channel)
+    col = 0  
     
-    # Parcourir toutes les paires consécutives
     for idx in range(len(conv_layers) - 1):
         conv1 = conv_layers[idx]
         conv2 = conv_layers[idx + 1]
         
-        o = conv1.out_channels  # nombre de hidden channels pour cette paire
+        o = conv1.out_channels  
         i = conv1.in_channels
         kH, kW = conv1.kernel_size
         
-        # Forme: (out_channels, in_channels, kH, kW)
         w1 = conv1.weight
         w1_start, _ = starts[id(w1)]
         
-        # Pour chaque canal de sortie k
-        # Tous les poids w1[k, :, :, :] sont entrants
+
         base = torch.arange(o * i * kH * kW, device=device)
         base = base.view(o, -1)  # (o, i*kH*kW)
         rows_in = (w1_start + base).reshape(-1)
         
-        # Chaque canal k a i*kH*kW poids entrants
         cols_in = torch.repeat_interleave(
             torch.arange(o, device=device), 
             i * kH * kW
@@ -453,8 +429,7 @@ def compute_B_full_conv(model: nn.Module):
             neg_rows_all.append(rows_b1)
             neg_cols_all.append(cols_b1)
         
-        # Forme: (out_channels2, in_channels2, kH2, kW2)
-        # in_channels2 devrait être égal à o (out_channels de conv1)
+
         w2 = conv2.weight
         o2, o_check, kH2, kW2 = w2.shape
         assert o_check == o, f"Mismatch: conv1.out_channels={o} != conv2.in_channels={o_check}"
@@ -462,7 +437,7 @@ def compute_B_full_conv(model: nn.Module):
         w2_start, _ = starts[id(w2)]
         
         base2 = torch.arange(o2 * o * kH2 * kW2, device=device)
-        base2 = base2.view(o2, o, -1)  # (o2, o, kH2*kW2)
+        base2 = base2.view(o2, o, -1) 
         rows_out = (w2_start + base2).reshape(-1)
         
         cols_out = torch.arange(o, device=device).repeat_interleave(kH2 * kW2)
@@ -471,20 +446,18 @@ def compute_B_full_conv(model: nn.Module):
         pos_rows_all.append(rows_out)
         pos_cols_all.append(cols_out)
         
-        col += o  # avancer de o hidden channels
+        col += o  
     
     pos_rows_all = torch.cat(pos_rows_all)
     pos_cols_all = torch.cat(pos_cols_all)
     neg_rows_all = torch.cat(neg_rows_all)
     neg_cols_all = torch.cat(neg_cols_all)
     
-    # Trier par colonnes
     neg_cols_all, idx = torch.sort(neg_cols_all)
     neg_rows_all = neg_rows_all[idx]
     pos_cols_all, idx = torch.sort(pos_cols_all)
     pos_rows_all = pos_rows_all[idx]
     
-    # Séparer par colonne
     pos_cols = split_sorted_by_column(pos_cols_all, pos_rows_all, n_hidden)
     neg_cols = split_sorted_by_column(neg_cols_all, neg_rows_all, n_hidden)
     
@@ -504,13 +477,12 @@ def compute_B_resnet_c(model):
     
     n_hidden = count_hidden_channels_resnet_c(model)
     
-    # Stockage des +1 et -1
     pos_rows_all = []
     pos_cols_all = []
     neg_rows_all = []
     neg_cols_all = []
     
-    col = 0  # colonne courante
+    col = 0 
     
     def add_conv_weights(conv, sign, col_offset, starts, device):
         """Ajoute les poids d'une conv avec le signe donné"""
@@ -521,11 +493,11 @@ def compute_B_resnet_c(model):
         o, i, kH, kW = w.shape
         w_start, _ = starts[id(w)]
         
-        if sign == -1:  # Entrants: tous les poids pour chaque canal de sortie
+        if sign == -1:  
             base = torch.arange(o * i * kH * kW, device=device).view(o, -1)
             rows = (w_start + base).reshape(-1)
             cols = torch.repeat_interleave(torch.arange(o, device=device), i * kH * kW) + col_offset
-        else:  # Sortants: tous les poids pour chaque canal d'entrée
+        else:  
             base = torch.arange(o * i * kH * kW, device=device).view(o, i, -1)
             rows = (w_start + base).reshape(-1)
             cols = torch.arange(i, device=device).repeat_interleave(kH * kW).repeat(o) + col_offset
@@ -533,24 +505,20 @@ def compute_B_resnet_c(model):
         rows_list.append(rows)
         cols_list.append(cols)
         
-        # Bias si existe
-        if conv.bias is not None and sign == -1:  # Bias uniquement pour entrants
+        if conv.bias is not None and sign == -1:  
             b_start, _ = starts[id(conv.bias)]
             rows_list.append(torch.arange(b_start, b_start + o, device=device))
             cols_list.append(torch.arange(col_offset, col_offset + o, device=device))
         
         return rows_list, cols_list
     
-    # 1. Rescaling après conv1 initial
     conv1_initial = model.conv1
     o_init = conv1_initial.out_channels
     
-    # conv1.weight et bias → -1 (entrants)
     rows_list, cols_list = add_conv_weights(conv1_initial, -1, col, starts, device)
     neg_rows_all.extend(rows_list)
     neg_cols_all.extend(cols_list)
     
-    # Sortants: layer1.0.conv1 et layer1.0.shortcut
     first_block = model.layer1[0]
     rows_list, cols_list = add_conv_weights(first_block.conv1, +1, col, starts, device)
     pos_rows_all.extend(rows_list)
@@ -562,7 +530,6 @@ def compute_B_resnet_c(model):
     
     col += o_init
     
-    # 2. Pour chaque bloc
     all_blocks = []
     for layer_name in ['layer1', 'layer2', 'layer3', 'layer4']:
         layer = getattr(model, layer_name)
