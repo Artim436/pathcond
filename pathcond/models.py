@@ -26,7 +26,6 @@ class MLP(nn.Sequential):
         layers = []
         prev = self.input_dim
 
-        # Hidden layers: Linear + ReLU, bias=True
         for h in self.hidden_dims:
             layers.append(nn.Linear(prev, h, bias=True))
             layers.append(nn.ReLU())
@@ -59,15 +58,13 @@ class MLP_BN(nn.Sequential):
         prev = input_dim
 
         for i, h in enumerate(hidden_dims_list):
-            # Ajout de noms explicites : 'lin', 'bn', 'relu'
             layers[f"lin{i}"] = nn.Linear(prev, h, bias=False)
-            layers[f"bn{i}"] = nn.BatchNorm1d(h) # "bn" est maintenant dans le nom
+            layers[f"bn{i}"] = nn.BatchNorm1d(h) 
             layers[f"relu{i}"] = nn.ReLU()
             prev = h
 
         layers["output"] = nn.Linear(prev, output_dim, bias=True)
 
-        # On passe l'OrderedDict au constructeur de nn.Sequential
         self.model = nn.Sequential(layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -115,10 +112,10 @@ class FullyConvolutional(nn.Module):
         # reset parameters
         # self.reset_parameters()
 
-    # def reset_parameters(self):
-    #     for m in self.modules():
-    #         if isinstance(m, nn.Conv2d):
-    #             nn.init.kaiming_normal_(m.weight)
+    def reset_parameters(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight)
 
     def forward(self, x):
         x = self.relu(self.conv1(x))
@@ -171,10 +168,10 @@ class FullyConvolutional_without_bn(nn.Module):
         # reset parameters
         # self.reset_parameters()
 
-    # def reset_parameters(self):
-    #     for m in self.modules():
-    #         if isinstance(m, nn.Conv2d):
-    #             nn.init.kaiming_normal_(m.weight)
+    def reset_parameters(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight)
 
     def forward(self, x):
         x = self.relu(self.conv1(x))
@@ -218,8 +215,6 @@ class BasicBlock(nn.Module):
         
         self.relu = nn.ReLU(inplace=True)
         
-        # Type C: TOUJOURS utiliser une convolution 1x1 pour le shortcut
-        # Même quand in_channels == out_channels et stride == 1
         self.shortcut = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, kernel_size=1, 
                      stride=stride, bias=False),
@@ -260,7 +255,6 @@ class ResNet18TypeC(nn.Module):
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         
         # Blocs résiduels
-        # ResNet-18: [2, 2, 2, 2] blocs par couche
         self.layer1 = self._make_layer(64, 2, stride=1)
         self.layer2 = self._make_layer(128, 2, stride=2)
         self.layer3 = self._make_layer(256, 2, stride=2)
@@ -318,58 +312,45 @@ class ResNet18TypeC(nn.Module):
         return x
     
 def resnet18_c_cifar10(num_classes=10, seed: int = 0) -> nn.Module:
-    # Load normal ResNet-18
     torch.manual_seed(seed)
     model = ResNet18TypeC(num_classes=num_classes)
 
-    # Replace first conv: 7x7 stride 2 → 3x3 stride 1, and adapt to 3 channels
     model.conv1 = nn.Conv2d(
         3, 64, kernel_size=3, stride=1, padding=1, bias=False
     )
-    # Remove maxpool (too destructive for 32x32)
     model.maxpool = nn.Identity()
 
     return model
 
 
 def resnet18_mnist(num_classes=10, seed: int = 0) -> nn.Module:
-    # Load normal ResNet-18
     torch.manual_seed(seed)
     model = models.resnet18(weights=None)
 
-    # Replace first conv: 7x7 stride 2 → 3x3 stride 1, and adapt to 1 channel
     model.conv1 = nn.Conv2d(
         1, 64, kernel_size=3, stride=1, padding=1, bias=False
     )
-    # Remove maxpool (too destructive for 28x28)
     model.maxpool = nn.Identity()
 
-    # Replace final classification layer
     model.fc = nn.Linear(512, num_classes)
 
     return model
 
 def resnet18_cifar10(num_classes=10, seed: int = 0) -> nn.Module:
-    # Load normal ResNet-18
     torch.manual_seed(seed)
     model = models.resnet18(weights=None)
 
-    # Replace first conv: 7x7 stride 2 → 3x3 stride 1, and adapt to 3 channels
     model.conv1 = nn.Conv2d(
         3, 64, kernel_size=3, stride=1, padding=1, bias=False
     )
-    # Remove maxpool (too destructive for 32x32)
     model.maxpool = nn.Identity()
 
-    # Replace final classification layer
     model.fc = nn.Linear(512, num_classes)
 
     return model
 
 
-# -----------------------------
 # Model: UNet
-# -----------------------------
 
 class DoubleConv(nn.Module):
     def __init__(self, in_channels: int, out_channels: int):
@@ -478,15 +459,15 @@ def grad_2(model, inputs):
     def fct(model, inputs):
         return model.squared_forward(inputs).sum()
     grad2 = torch.autograd.grad(fct(model, inputs), model.parameters(), create_graph=True)
-    grad2 = [g.view(-1) for g in grad2]  # Aplatir les gradients
-    return torch.cat(grad2)  # Concaténer les gradients en un seul tenseur
+    grad2 = [g.view(-1) for g in grad2]  
+    return torch.cat(grad2) 
 
 def grad(model, inputs):
     def fct(model, inputs):
         return model.forward(inputs).sum()
     grad = torch.autograd.grad(fct(model, inputs), model.parameters())
-    grad = [g.view(-1) for g in grad]  # Aplatir les gradients
-    return torch.cat(grad)  # Concaténer les gradients en un seul tenseur
+    grad = [g.view(-1) for g in grad]  
+    return torch.cat(grad) 
 
 
 class DoubleConvWOBN(nn.Module):

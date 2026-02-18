@@ -27,7 +27,6 @@ def train_one_epoch_enc_dec(model, loader, criterion, optimizer, device, fractio
     total_samples = 0
     max_batches = int(len(loader) * fraction)
     
-    # Note: On ne fait plus model.to(device) ici, on suppose qu'il y est déjà.
     start_fwd = torch.cuda.Event(enable_timing=True)
     end_fwd = torch.cuda.Event(enable_timing=True)
     start_bwd = torch.cuda.Event(enable_timing=True)
@@ -38,14 +37,13 @@ def train_one_epoch_enc_dec(model, loader, criterion, optimizer, device, fractio
     for i, (x, _) in enumerate(loader):
         if i >= max_batches:
             break
-        # Transfert asynchrone pour gagner un peu de temps sur GPU
         x = x.to(device)
         x = x.view(x.size(0), -1)
         optimizer.zero_grad()
         start_fwd.record()
         output = model(x)
         end_fwd.record()
-        loss = criterion(output, x)  # Reconstruction loss
+        loss = criterion(output, x) 
         start_bwd.record()
         loss.backward()
         end_bwd.record()
@@ -60,7 +58,7 @@ def evaluate_enc_dec(model, loader, device) -> float:
     model.eval()
     total_loss = 0.0
     total_samples = 0
-    criterion = torch.nn.MSELoss()  # Sum to accumulate total loss
+    criterion = torch.nn.MSELoss()  
 
     with torch.no_grad():
         for x, _ in loader:
@@ -68,14 +66,13 @@ def evaluate_enc_dec(model, loader, device) -> float:
             x = x.view(x.size(0), -1)
 
             output = model(x)
-            loss = criterion(output, x)  # Reconstruction loss
+            loss = criterion(output, x) 
             total_loss += loss.item() * x.size(0)
             total_samples += x.size(0)
 
-    return total_loss / total_samples  # Return average loss
+    return total_loss / total_samples  
 
 def train_one_epoch_full_batch(model, X, y, criterion, optimizer) -> float:
-    # X et y doivent être sur le device AVANT l'appel
     model.train()
     optimizer.zero_grad()
     loss = criterion(model(X), y)

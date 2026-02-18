@@ -88,7 +88,6 @@ def update_z_polynomial_enorm(
     n_hidden: int, 
     tol: float = 1e-6
 ) -> Tuple[Tensor, Tensor]:
-    # Use double precision as requested
     dtype = torch.double
     device = param_vector.device
     n_params = param_vector.numel()
@@ -96,39 +95,24 @@ def update_z_polynomial_enorm(
     Z = torch.zeros(n_hidden, dtype=dtype, device=device) 
     BZ = torch.zeros(n_params, dtype=dtype, device=device)
     
-    # Pre-calculate squared parameters
     g = param_vector.pow(2).to(dtype)
     
     for k in range(nb_iter):
         delta_total = 0.0
         for h in range(n_hidden):
-            # Extract indices for current hidden unit
             out_idx = pos_cols[h]
             in_idx = neg_cols[h]
-
-            # Current Z value for this hidden unit
             z_h = Z[h]
-            
-            # Use indexing to get relevant g values
             g_out = g[out_idx]
             g_in = g[in_idx]
-            
-            # Vectorized exponential and sum operations
-            # Note: We keep things as tensors to avoid .item() inside the loop
             e_out_h = torch.exp(2.0 * (BZ[out_idx] - z_h)) * g_out
             b_h = e_out_h.sum()
-            
             e_in_h = torch.exp(2.0 * (BZ[in_idx] + z_h)) * g_in
             c_h = e_in_h.sum()
-            
-            # Calculate new Z
             x = c_h / b_h
             z_new = 0.25 * torch.log(x)
-
             delta = z_new - z_h
             delta_total += torch.abs(delta).item()
-            
-            # Update BZ and Z
             BZ[out_idx] += delta
             BZ[in_idx] -= delta
             Z[h] = z_new
@@ -166,7 +150,6 @@ def optimize_rescaling_polynomial(model, n_iter=10, tol=1e-6, resnet=False, enor
     else:
         BZ, Z = update_z_polynomial(diag_G, pos_cols, neg_cols, n_iter, n_hidden_neurons, tol)
     large_value = 1e1
-    # print if there is some inf or nan values
     if torch.isinf(BZ).any() or torch.isinf(Z).any():
         print("Warning: Inf values encountered in BZ or Z during optimization.")
     if torch.isnan(BZ).any() or torch.isnan(Z).any():
@@ -199,22 +182,18 @@ def reweight_model(model: nn.Module, BZ: torch.Tensor, Z: torch.Tensor = None, m
         nn.Module: Reweighted model (deep copy).
     """
 
-    # Deep copy to avoid modifying the original
     new_model = copy.deepcopy(model)
     new_model.eval()
 
-    # Detect device
     device = next(model.parameters()).device
     new_model.to(device)
 
-    # Flatten parameters
     param_vec = parameters_to_vector(new_model.parameters())
 
     BZ = BZ.to(device)
     assert BZ.shape == param_vec.shape, \
         f"Size of BZ {BZ.shape} incompatible with {param_vec.shape}"
 
-    # Apply standard parameter reweighting
     if enorm:
         reweighted_vec = param_vec * torch.exp(BZ)
     else:
@@ -236,7 +215,6 @@ def reweight_model(model: nn.Module, BZ: torch.Tensor, Z: torch.Tensor = None, m
                 rmean *= torch.exp(0.5 * bzrmean)
                 start_rmean += o
 
-    # Copy back parameters
     vector_to_parameters(reweighted_vec, new_model.parameters())
 
     return new_model
@@ -260,20 +238,16 @@ def reweight_model_inplace(
     Returns:
         None (modifications in-place)
     """
-    
     model.eval()
     
-    # Detect device
     device = next(model.parameters()).device
     BZ = BZ.to(device)
     
-    # Flatten parameters
     param_vec = parameters_to_vector(model.parameters())
     
     assert BZ.shape == param_vec.shape, \
         f"Size of BZ {BZ.shape} incompatible with {param_vec.shape}"
     
-    # Apply standard parameter reweighting
     if enorm:
         reweighted_vec = param_vec * torch.exp(BZ)
     else:

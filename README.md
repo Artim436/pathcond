@@ -35,11 +35,7 @@ This leaves the network function **exactly unchanged** by ReLU positive homogene
 
 We consider a lifting of the network parameters, denoted $\Phi$, that is invariant under rescaling (like the network's realization map). Selecting an admissible rescaling corresponds to shaping the geometry of the optimization dynamics in this lifted space.
 
-Specifically, we seek the rescaling that best aligns the **path magnitude matrix** $G = \partial\Phi^\top \partial\Phi$ with the identity, by solving:
-
-$$\min_{D \in \mathcal{G},\; \alpha > 0} \; d_{-\!\log\det}\!\left(\alpha\, G_{D\theta} \,\Big\|\, I_p\right)$$
-
-where $d_{-\log\det}$ is the Bregman divergence induced by $\zeta(X) = -\log\det(X)$.
+Specifically, we seek the rescaling that best aligns the **path magnitude matrix** $G = \partial\Phi^\top \partial\Phi$ with the identity.
 
 ### Algorithm
 
@@ -75,7 +71,7 @@ pip install -e ".[expes]"
 # Run the demo notebooks — adds jupyter, scikit-learn, matplotlib, ...
 pip install -e ".[demo]"
 
-# Everything at once
+# Everything (everywhere all) at once
 pip install -e ".[all]"
 ```
 

@@ -9,7 +9,6 @@ def run_grid_search(architectures=[[8, 8]], experiment_name="default_experiment"
     learning_rates = list(np.logspace(-4, 0, num=nb_lr)) if nb_lr > 1 else lrs
     all_methods = ["baseline", "pathcond", "enorm", "bn_baseline", "bn_pathcond", "bn_enorm", "pathcond_telep_schedule", 'bn_pathcond_telep_schedule']
     
-    # Filtrage des méthodes pour cette machine
     methods = selected_methods if selected_methods else all_methods
     seeds = list(range(seed_nb))
     optimizer = "sgd"
@@ -17,7 +16,6 @@ def run_grid_search(architectures=[[8, 8]], experiment_name="default_experiment"
     total_runs = len(architectures) * len(learning_rates) * len(methods) * len(seeds)
     current_run = 1
 
-    # On récupère le nom de la machine pour le loguer
     hostname = socket.gethostname()
 
     for seed in seeds:

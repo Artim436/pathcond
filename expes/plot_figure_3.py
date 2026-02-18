@@ -16,7 +16,6 @@ def fetch_run_metrics(run, metrics_list, client):
     """Fonction helper optimisée pour récupérer les métriques d'un seul run."""
     params = run.data.params
     
-    # 1. Extraction et parsing unique (Hors de la boucle)
     lr = params.get("learning_rate") or params.get("lr")
     if lr is None:
         return []
@@ -27,12 +26,10 @@ def fetch_run_metrics(run, metrics_list, client):
     n_params = int(params.get("n_params", -1))
     max_rescale = float(params.get("max_rescaling_on_hidden_neurons_init", np.nan))
     
-    # Calcul de la norme L2 une seule fois par run
     l2_norm = np.nan
     rescaling_str = params.get("rescaling_on_hidden_neurons_init")
     if rescaling_str:
         try:
-            # MLflow stocke les listes comme des strings "[0.1, 0.2, ...]"
             rescaling_list = ast.literal_eval(rescaling_str)
             l2_norm = float(np.linalg.norm(rescaling_list))
         except (ValueError, SyntaxError):
@@ -40,13 +37,10 @@ def fetch_run_metrics(run, metrics_list, client):
 
     run_results = []
 
-    # 2. Récupération des métriques
     for metric_name in metrics_list:
         try:
-            # L'appel API reste le goulot d'étranglement
             history = client.get_metric_history(run.info.run_id, metric_name)
             
-            # Utilisation d'une compréhension de liste pour la vitesse
             run_results.extend([
                 {
                     "method": method,
@@ -74,17 +68,13 @@ def get_multiple_metrics_history_fast(experiment_name, metrics_list=["train_loss
     if not experiment:
         return pd.DataFrame()
 
-    # On récupère tous les runs d'un coup
     runs = client.search_runs(experiment.experiment_id)
     
     all_data = []
     
-    # Parallélisation des appels API
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # On map la fonction sur chaque run
         results = list(executor.map(lambda r: fetch_run_metrics(r, metrics_list, client), runs))
     
-    # Aplatir la liste de listes
     for run_data in results:
         all_data.extend(run_data)
 
@@ -92,7 +82,7 @@ def get_multiple_metrics_history_fast(experiment_name, metrics_list=["train_loss
 
 
 def plot_multi_metrics_per_lr(df, metrics_to_plot, lrs_to_plot=None, experiment_name=None, 
-                               show_std=True, use_sem=False, smoothing=0.0): # <-- Ajout du paramètre
+                               show_std=True, use_sem=False, smoothing=0.0):
     """
     Affiche les métriques avec une option de lissage (EMA).
     smoothing: float entre 0 (pas de lissage) et 1 (lissage max).
@@ -100,8 +90,6 @@ def plot_multi_metrics_per_lr(df, metrics_to_plot, lrs_to_plot=None, experiment_
     if df.empty: 
         print("DataFrame vide, rien à tracer.")
         return
-
-    # --- CONFIGURATION STYLE (Inchangée) ---
     n_metrics = len(metrics_to_plot)
     fig_width = 6.75 
     fig_height = 2.2 
@@ -117,7 +105,6 @@ def plot_multi_metrics_per_lr(df, metrics_to_plot, lrs_to_plot=None, experiment_
         'grid.alpha': 0.3
     })
 
-    # --- PRÉPARATION DATA (Inchangée) ---
     name_map = {"train_acc": "train_accuracy", "test_acc": "test_accuracy", "acc": "test_accuracy", "accuracy": "test_accuracy"}
     df = df.copy()
     df['metric'] = df['metric'].replace(name_map)
@@ -166,14 +153,10 @@ def plot_multi_metrics_per_lr(df, metrics_to_plot, lrs_to_plot=None, experiment_
                     subset = df_m[df_m["method"] == method_id]
                     if subset.empty: continue
 
-                    stats = subset.groupby("step")["value"].agg(["mean", "std", "count"]).reset_index()
-                    
-                    # --- CALCUL DU LISSAGE (EMA) ---
+                    stats = subset.groupby("step")["value"].agg(["mean", "std", "count"]).reset_index()        
                     y_raw = stats["mean"].values
                     if smoothing > 0:
-                        # On garde la courbe brute pour l'arrière-plan
                         ax.plot(stats["step"], y_raw, color=style["color"], alpha=0.2, lw=1.0, zorder=style["zorder"]-1)
-                        # Calcul de l'EMA
                         y_plot = stats["mean"].ewm(alpha=1 - smoothing).mean()
                     else:
                         y_plot = y_raw
@@ -185,21 +168,17 @@ def plot_multi_metrics_per_lr(df, metrics_to_plot, lrs_to_plot=None, experiment_
                                    color=style["color"], linestyle=style["ls"], lw=1.6, zorder=style["zorder"])
                     
                     if show_std:
-                        # Le fill_between reste basé sur les stats brutes pour l'honnêteté scientifique
                         lower = np.maximum(y_raw - error, y_raw * 0.1) if metric_config.get(metric, {}).get("log") else (y_raw - error)
                         ax.fill_between(stats["step"], lower, y_raw + error, 
                                         color=line.get_color(), alpha=0.12)
 
-                # --- CONFIGURATION AXES ---
                 config = metric_config.get(metric, {"label": metric, "log": False})
                 ax.set_ylabel(config["label"])
                 ax.set_xlabel("Epochs")
                 if config["log"]: ax.set_yscale("log")
                 sns.despine(ax=ax)
 
-            # --- LÉGENDE ET SAUVEGARDE ---
             handles, labels = axes[0, 0].get_legend_handles_labels()
-            # On filtre les doublons de légende si on a tracé raw + smooth
             by_label = dict(zip(labels, handles))
             fig.legend(by_label.values(), by_label.keys(), loc='lower center', 
                        bbox_to_anchor=(0.5, -0.02), ncol=min(len(by_label), 4), 
@@ -213,7 +192,7 @@ def plot_multi_metrics_per_lr(df, metrics_to_plot, lrs_to_plot=None, experiment_
             
             plt.savefig(out_dir / filename, bbox_inches='tight', dpi=300)
             plt.close(fig)
-            print(f"✅ Figure sauvegardée : {filename} (Smoothing: {smoothing})")
+            print(f"Figure sauvegardée : {filename} (Smoothing: {smoothing})")
 
 
 

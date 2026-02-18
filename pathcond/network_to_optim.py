@@ -25,6 +25,8 @@ class DoubleConv(nn.Module):
         return x
 
 
+
+# the next function is copied from https://github.com/agonon/pathnorm_toolkit, with the agreement of Antoine Gonon 
 def set_weights_for_path_norm(
     model, exponent=1, provide_original_weights=False
 ):
@@ -308,7 +310,7 @@ def compute_B_resnet(model: nn.Module, module_type=None):
     neg_rows_all = []
     neg_cols_all = []
 
-    col = 0  # colonne courante
+    col = 0  
 
     for lname, block in iter_modules_by_type(model, module_type or BasicBlock):
         # if 'DoubleConv' object has no attribute 'bn1'
@@ -321,7 +323,6 @@ def compute_B_resnet(model: nn.Module, module_type=None):
         i = conv1.in_channels
         kH, kW = conv1.kernel_size
 
-        # ----------- (1) conv1.weight -> -1 entrants -----------
         w1 = conv1.weight
         w1_start, _ = starts[id(w1)]
 
@@ -337,7 +338,6 @@ def compute_B_resnet(model: nn.Module, module_type=None):
         neg_rows_all.append(rows_in)
         neg_cols_all.append(cols_in)
 
-        # ----------- (2) bn1.bias -> -1 -----------
         if bn1 is not None:
             b1 = bn1.bias
             b1_start, _ = starts[id(b1)]
@@ -347,7 +347,6 @@ def compute_B_resnet(model: nn.Module, module_type=None):
             neg_rows_all.append(rows_bn)
             neg_cols_all.append(cols_bn)
 
-        # ----------- (3) conv1.bias si existe -----------
         if conv1.bias is not None:
             cb = conv1.bias
             cb_start, _ = starts[id(cb)]
@@ -357,7 +356,6 @@ def compute_B_resnet(model: nn.Module, module_type=None):
             neg_rows_all.append(rows_cb)
             neg_cols_all.append(cols_cb)
 
-        # ----------- (4) conv2.weight -> +1 sortants -----------
         w2 = conv2.weight
         o2, o_in, kH2, kW2 = w2.shape
         assert o_in == o
@@ -393,16 +391,8 @@ def compute_B_resnet(model: nn.Module, module_type=None):
 
 def compute_B_full_conv(model: nn.Module):
     """
-    Version sparse ultra-optimisée pour CNN générique:
-    
-    Pour chaque paire de Conv2d consécutives (conv_i, conv_{i+1}):
-    - Les out_channels de conv_i forment des hidden channels
-    - Paramètres ENTRANTS (coefficient -1):
-      * conv_i.weight (tous les poids de sortie du canal)
-      * conv_i.bias (si existe)
-    - Paramètres SORTANTS (coefficient +1):
-      * conv_{i+1}.weight (tous les poids d'entrée du canal correspondant)
-    
+    Version sparse pour CNN générique:
+
     Retourne:
         pos_cols: liste de tenseurs, pos_cols[h] = indices où B[:,h] = +1
         neg_cols: liste de tenseurs, neg_cols[h] = indices où B[:,h] = -1
@@ -412,7 +402,6 @@ def compute_B_full_conv(model: nn.Module):
     
     n_hidden = count_hidden_channels_full_conv(model)
     
-    # Récupérer toutes les Conv2d dans l'ordre
     conv_layers = []
     for name, module in model.named_modules():
         if isinstance(module, nn.Conv2d):
@@ -435,12 +424,11 @@ def compute_B_full_conv(model: nn.Module):
         i = conv1.in_channels
         kH, kW = conv1.kernel_size
         
-        # ----------- (1) conv1.weight -> -1 entrants -----------
         # Forme: (out_channels, in_channels, kH, kW)
         w1 = conv1.weight
         w1_start, _ = starts[id(w1)]
         
-        # Pour chaque canal de sortie k ∈ [0, o-1]:
+        # Pour chaque canal de sortie k
         # Tous les poids w1[k, :, :, :] sont entrants
         base = torch.arange(o * i * kH * kW, device=device)
         base = base.view(o, -1)  # (o, i*kH*kW)
@@ -456,7 +444,6 @@ def compute_B_full_conv(model: nn.Module):
         neg_rows_all.append(rows_in)
         neg_cols_all.append(cols_in)
         
-        # ----------- (2) conv1.bias -> -1 si existe -----------
         if conv1.bias is not None:
             b1 = conv1.bias
             b1_start, _ = starts[id(b1)]
@@ -466,7 +453,6 @@ def compute_B_full_conv(model: nn.Module):
             neg_rows_all.append(rows_b1)
             neg_cols_all.append(cols_b1)
         
-        # ----------- (3) conv2.weight -> +1 sortants -----------
         # Forme: (out_channels2, in_channels2, kH2, kW2)
         # in_channels2 devrait être égal à o (out_channels de conv1)
         w2 = conv2.weight
@@ -475,13 +461,10 @@ def compute_B_full_conv(model: nn.Module):
         
         w2_start, _ = starts[id(w2)]
         
-        # Pour chaque canal k ∈ [0, o-1]:
-        # Tous les poids w2[:, k, :, :] sont sortants
         base2 = torch.arange(o2 * o * kH2 * kW2, device=device)
         base2 = base2.view(o2, o, -1)  # (o2, o, kH2*kW2)
         rows_out = (w2_start + base2).reshape(-1)
         
-        # Chaque canal k apparaît kH2*kW2 fois pour chaque out_channel de conv2
         cols_out = torch.arange(o, device=device).repeat_interleave(kH2 * kW2)
         cols_out = cols_out.repeat(o2) + col
         
@@ -490,7 +473,6 @@ def compute_B_full_conv(model: nn.Module):
         
         col += o  # avancer de o hidden channels
     
-    # Fusionner tous les +1 et -1
     pos_rows_all = torch.cat(pos_rows_all)
     pos_cols_all = torch.cat(pos_cols_all)
     neg_rows_all = torch.cat(neg_rows_all)
@@ -512,24 +494,6 @@ def compute_B_full_conv(model: nn.Module):
 def compute_B_resnet_c(model):
     """
     Version optimisée pour ResNet type C selon la structure de rescaling:
-    
-    Pour chaque bloc k:
-    1. LEFT-RESCALING (entre bloc k-1 et bloc k):
-       - Divise les poids ENTRANTS de Conv1 et ConvSkip du bloc k
-       - Multiplie les poids SORTANTS de Conv2 et ConvSkip du bloc k-1
-    
-    2. INTERNAL RESCALING (dans le bloc k, entre Conv1 et Conv2):
-       - Divise les poids SORTANTS de Conv1
-       - Multiplie les poids ENTRANTS de Conv2
-    
-    3. RIGHT-RESCALING (entre bloc k et bloc k+1):
-       - Divise les poids SORTANTS de Conv2 et ConvSkip du bloc k
-       - Multiplie les poids ENTRANTS de Conv1 et ConvSkip du bloc k+1
-    
-    Structure:
-        bloc k-1 → [LEFT α] → Conv1 → [INTERNAL β] → Conv2 → 
-                                 ↓                      ↓
-                            [LEFT α] → ConvSkip →  (+) → [RIGHT γ] → bloc k+1
     
     Retourne:
         pos_cols: liste de tenseurs, pos_cols[h] = indices où B[:,h] = +1
@@ -610,10 +574,8 @@ def compute_B_resnet_c(model):
         conv2 = block.conv2
         shortcut = block.shortcut[0]
         
-        # INTERNAL RESCALING: Conv1 → Conv2
         o_internal = conv1.out_channels
         
-        # conv1.weight et bias → -1 (sortants pour ce rescaling)
         w1 = conv1.weight
         o1, i1, kH1, kW1 = w1.shape
         w1_start, _ = starts[id(w1)]
@@ -628,18 +590,15 @@ def compute_B_resnet_c(model):
             neg_rows_all.append(torch.arange(b1_start, b1_start + o1, device=device))
             neg_cols_all.append(torch.arange(col, col + o1, device=device))
         
-        # conv2.weight → +1 (entrants pour ce rescaling)
         rows_list, cols_list = add_conv_weights(conv2, +1, col, starts, device)
         pos_rows_all.extend(rows_list)
         pos_cols_all.extend(cols_list)
         
         col += o_internal
         
-        # RIGHT RESCALING: sortie du bloc → bloc suivant (sauf dernier bloc)
         if block_idx < len(all_blocks) - 1:
             o_right = conv2.out_channels
             
-            # conv2.weight et shortcut.weight → -1 (sortants)
             w2 = conv2.weight
             o2, i2, kH2, kW2 = w2.shape
             w2_start, _ = starts[id(w2)]
@@ -654,7 +613,6 @@ def compute_B_resnet_c(model):
                 neg_rows_all.append(torch.arange(b2_start, b2_start + o2, device=device))
                 neg_cols_all.append(torch.arange(col, col + o2, device=device))
             
-            # shortcut.weight → -1 (sortants)
             w_skip = shortcut.weight
             o_skip, i_skip, kH_skip, kW_skip = w_skip.shape
             w_skip_start, _ = starts[id(w_skip)]
@@ -669,7 +627,6 @@ def compute_B_resnet_c(model):
                 neg_rows_all.append(torch.arange(b_skip_start, b_skip_start + o_skip, device=device))
                 neg_cols_all.append(torch.arange(col, col + o_skip, device=device))
             
-            # Bloc suivant: conv1 et shortcut → +1 (entrants)
             next_block = all_blocks[block_idx + 1]
             rows_list, cols_list = add_conv_weights(next_block.conv1, +1, col, starts, device)
             pos_rows_all.extend(rows_list)
@@ -681,7 +638,6 @@ def compute_B_resnet_c(model):
             
             col += o_right
     
-    # Fusionner tous les +1 et -1
     if len(pos_rows_all) > 0:
         pos_rows_all = torch.cat(pos_rows_all)
         pos_cols_all = torch.cat(pos_cols_all)
@@ -696,7 +652,6 @@ def compute_B_resnet_c(model):
         neg_rows_all = torch.tensor([], dtype=torch.long, device=device)
         neg_cols_all = torch.tensor([], dtype=torch.long, device=device)
     
-    # Trier par colonnes
     if len(neg_cols_all) > 0:
         neg_cols_all, idx = torch.sort(neg_cols_all)
         neg_rows_all = neg_rows_all[idx]
@@ -705,7 +660,6 @@ def compute_B_resnet_c(model):
         pos_cols_all, idx = torch.sort(pos_cols_all)
         pos_rows_all = pos_rows_all[idx]
     
-    # Séparer par colonne
     pos_cols = split_sorted_by_column(pos_cols_all, pos_rows_all, n_hidden)
     neg_cols = split_sorted_by_column(neg_cols_all, neg_rows_all, n_hidden)
     

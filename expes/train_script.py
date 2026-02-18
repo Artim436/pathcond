@@ -28,7 +28,6 @@ def train_loop(
     
     device = "cuda" if torch.cuda.is_available() else "cpu"
     
-    # --- MLflow Configuration ---
     EXPERIMENT_NAME = f"PC_{data}_{experiment_name}"
     mlflow.set_experiment(EXPERIMENT_NAME)
 
@@ -92,9 +91,7 @@ def train_loop(
     else:
         criterion = nn.CrossEntropyLoss()
 
-    # --- Chargement des Données ---
     if data == "moons":
-        # On déplace les tenseurs sur le device UNE SEULE FOIS ici
         X_train, X_test, y_train, y_test = moons_loaders(seed=seed)
         X_train, X_test = X_train.to(device), X_test.to(device)
         y_train, y_test = y_train.to(device), y_test.to(device)
@@ -108,7 +105,6 @@ def train_loop(
     elif data == "mnist_enc_dec":
         train_dl, test_dl = mnist_loaders(batch_size=128, seed=seed)
     
-    # --- Initialisation de l'Optimiseur ---
     def get_optimizer(model_params):
         if optimizer == "sgd":
             if momentum:
@@ -134,7 +130,6 @@ def train_loop(
     
         start_training_total = time.time()
         time_teleport_at_init = 0.0
-        # --- Rescaling Initial ---
         if method in ["pathcond", "dag_enorm", "pathcond_telep_schedule"]:
             start_init = time.time()
             is_enorm = (method == "dag_enorm")
@@ -157,20 +152,15 @@ def train_loop(
     
         
         start_epoch = time.time()
-        # Avant la boucle, on initialise les événements (uniquement si cuda)
-        # --- Initialisation (avant la boucle) ---
         if device == "cuda":
-            # On crée les événements une seule fois
             start_fwd = torch.cuda.Event(enable_timing=True)
             end_fwd = torch.cuda.Event(enable_timing=True)
             start_bwd = torch.cuda.Event(enable_timing=True)
             end_bwd = torch.cuda.Event(enable_timing=True)
 
-        # Compteurs pour la moyenne
         nb_measures = 0
 
         for epoch in range(epochs):
-            # On ne mesure le timing que lors des phases de log pour ne pas ralentir le reste
             should_measure = (epoch+1) % 1000 == 0 and (device == "cuda") and (data == "moons")
 
             if data == "moons":
@@ -178,23 +168,19 @@ def train_loop(
                 optim.zero_grad()
 
                 if should_measure:
-                    # --- Forward avec mesure ---
                     start_fwd.record()
                     loss = criterion(model(X_train), y_train)
                     end_fwd.record()
 
-                    # --- Backward avec mesure ---
                     start_bwd.record()
                     loss.backward()
                     end_bwd.record()
                     
-                    # On synchronise uniquement quand on mesure
                     torch.cuda.synchronize()
                     timer_forward += start_fwd.elapsed_time(end_fwd) / 1000.0
                     timer_backward += start_bwd.elapsed_time(end_bwd) / 1000.0
                     nb_measures += 1
                 else:
-                    # --- Entraînement normal (vitesse maximale) ---
                     loss = criterion(model(X_train), y_train)
                     loss.backward()
                 
@@ -204,16 +190,15 @@ def train_loop(
             elif data == "mnist_enc_dec":
                 loss, timer_forward, timer_backward = train_one_epoch_enc_dec(model, train_dl, criterion, optim, device)
 
-            # Méthodes spécifiques (Schedule)
             if method == "enorm":
                 start_step = time.time()
                 enorm_obj.step()
                 timer_method_during_training += time.time() - start_step
             
             if data == "mnist_enc_dec" or data == "mnist":
-                telep_schedule_epoch = 50 #500 epochs in total
+                telep_schedule_epoch = 50 
             elif data == "cifar10":
-                telep_schedule_epoch = 20 #60 epochs in total
+                telep_schedule_epoch = 20
             if method == "pathcond_telep_schedule" and epoch % telep_schedule_epoch == 0 and epoch > 0:
                 start_step = time.time()
                 model, resc_during_training = rescaling_path_cond(model, nb_iter_optim_rescaling=1, device=device, data=data, enorm=False)
@@ -221,8 +206,6 @@ def train_loop(
                 timer_method_during_training += time.time() - start_step
                 mlflow.log_param(f"rescaling_on_hidden_neurons_epoch_{epoch}", torch.max(torch.abs(resc_during_training)))
 
-
-            # Metrics (tous les 50 epochs pour garder de la fluidité dans l'UI)
             if data == "moons":
                 if epoch % 10 == 0 or epoch == epochs - 1:
                     model.eval()
@@ -263,8 +246,6 @@ def train_loop(
         mlflow.log_metric("mean_backward_time_cuda", avg_bwd)
         mlflow.log_metric("time_teleport_at_init", time_teleport_at_init)
         
-
-        # Log du modèle uniquement à la fin
         mlflow.pytorch.log_model(model, name="model_final")
 
         n_params = sum(p.numel() for p in model.parameters())
