@@ -144,7 +144,7 @@ def optimize_rescaling_polynomial(model, n_iter=10, tol=1e-6, resnet=False, enor
     if enorm:
         param_vector = parameters_to_vector(model.parameters()).to(device=device, dtype=dtype)
     else:
-        diag_G = compute_diag_G(model).to(device=device, dtype=dtype)  # shape: [m], elementwise factor
+        diag_G = compute_diag_G(model).to(device=device, dtype=dtype)
     model_type = _detect_model_type(model)
     if model_type == "MLP":
         linear_indices = [i for i, layer in enumerate(model.model) if isinstance(layer, nn.Linear)]
