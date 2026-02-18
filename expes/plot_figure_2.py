@@ -447,4 +447,4 @@ def plot_master_zoom_panel(df, lr_val, target_depth_str, target_metric, metrics,
 if __name__ == "__main__":
     experiment_name = "PC_cifar10_FC_varying_depth"
     df = get_multiple_metrics_history_fast(experiment_name, metrics_list=["train_loss", "train_acc", "test_acc"])
-    plot_master_zoom_panel(lr_val=0.001, target_depth_str="[500, 500, 500]", target_metric="train_acc", metrics=["train_loss", "train_acc"], target_value=0.99, experiment_name=experiment_name, methods=["baseline", "pathcond", "enorm"])
+    plot_master_zoom_panel(df, lr_val=0.001, target_depth_str="[500, 500, 500]", target_metric="train_acc", metrics=["train_loss", "train_acc"], target_value=0.99, experiment_name=experiment_name, methods=["baseline", "pathcond", "enorm"])

@@ -9,6 +9,7 @@ import matplotlib.colors as mcolors
 import matplotlib.cm as cm
 import ast
 import os
+import seaborn as sns
 
 
 def fetch_run_metrics(run, metrics_list, client):
@@ -122,22 +123,20 @@ def plot_multi_metrics_per_lr(df, metrics_to_plot, lrs_to_plot=None, experiment_
     df['metric'] = df['metric'].replace(name_map)
     normalized_metrics = [name_map.get(m, m) for m in metrics_to_plot]
 
-    display_names = {
-        "baseline": "Baseline",
-        "pathcond": r"$\mathbf{Pathcond}$",
-        "enorm": "Enorm",
-        "bn_baseline": "BN Baseline",
-        "bn_pathcond": r"$\mathbf{Pathcond}$",
-        "pathcond_telep_schedule": "PC x Times",
-    }
-
-    style_map = {
-        "baseline":    {"color": "#1b9e77", "ls": "--", "zorder": 3},
-        "pathcond":    {"color": "#d95f02", "ls": "-", "zorder": 3},
-        "enorm":       {"color": "#7570b3", "ls": "-", "zorder": 2},
-        "bn_baseline": {"color": "#1b9e77", "ls": ":", "zorder": 1},
-        "bn_pathcond": {"color": "#e7298a", "ls": "-", "zorder": 1},
-        "pathcond_telep_schedule": {"color": "#a63603", "ls": "-", "zorder": 1},
+    display_names = { "baseline": "Baseline",
+                     "pathcond": r"$\mathbf{Pathcond}$",
+                     "enorm": "Enorm",
+                     "bn_baseline": "Baseline",
+                     "bn_pathcond": r"$\mathbf{Pathcond}$",
+                     "bn_enorm": "Enorm",
+                     "pathcond_telep_schedule": r"Pathcond $\times$ Schedule",
+                     "bn_pathcond_telep_schedule": r"BN Pathcond $\times$ Sched" }
+    style_map = { "baseline": {"color": "#1b9e77", "ls": "-", "marker": "o", "ms": 4},
+                 "pathcond": {"color": "#d95f02", "ls": "-", "marker": "s", "ms": 4},
+                 "enorm": {"color": "#7570b3", "ls": "-", "marker": "^", "ms": 4},
+                 "bn_baseline": {"color": "#1b9e77", "ls": "--", "linewidth": 1.5, "zorder": 2, "marker": "o", "ms": 4},
+                 "bn_pathcond": {"color": "#d95f02", "ls": "-", "linewidth": 1.5, "zorder": 1, "marker": "s", "ms": 4},
+                 "bn_enorm": {"color": "#7570b3", "ls": "-", "linewidth": 1.5, "zorder": 1, "marker": "^", "ms": 4},
     }
 
     metric_config = {

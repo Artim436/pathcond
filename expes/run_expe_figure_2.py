@@ -43,15 +43,15 @@ def run_grid_search(architectures=[[8, 8]], experiment_name="default_experiment"
                     current_run += 1
 
 if __name__ == "__main__":
-    my_archs = [[500]*k for k in range(3, 5)]  # Exemple d'architecture pour MLP sur CIFAR10
+    my_archs = [[500]*k for k in range(3, 9)]  # Exemple d'architecture pour MLP sur CIFAR10
     
     run_grid_search(
         architectures=my_archs, 
         experiment_name='FC_varying_depth',
         selected_methods=["bn_baseline", "bn_pathcond", "bn_enorm"],
-        epochs=5,
+        epochs=100,
         data="cifar10",
-        seed_nb=1,
+        seed_nb=3,
         lrs=[0.001],
         init_kai_normal=False
     )

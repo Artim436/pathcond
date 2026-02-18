@@ -9,21 +9,23 @@ todo
 `
 pip install -r requirements.txt
 `
+sachant que beaucoup de packages utiles pour suivre les expe ou plot mais en pratqiue besoin que de torch 
+
+
 
 ## How to use Pathcond
 
 The training procedure consists in performing one pathcond rescaling at init.
 ```python
-from enorm import ENorm
+from pathcond.pathcond import rescaling_path_cond
 
 
 # defining model and optimizer
 model = ...
 criterion = ...
-optimizer = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.9 weight_decay=1e-4)
+optimizer = ...
 
-# instantiating ENorm (here with asymmetric scaling coefficient c=1)
-enorm = ENorm(model.named_parameters(), optimizer, c=1)
+rescaling_path_cond(model_pathcond)
 
 # training loop
 for batch, target in train_loader:
@@ -39,7 +41,33 @@ for batch, target in train_loader:
   optimizer.step()
   enorm.step()
 ```
-Some precisions about the usage of ENorm (for details, see [our paper]()):
+Some precisions about the usage of PathCond (for details, see [our paper]()):
+
+process:
+diag_G = compute_diag_G(model) in pathcond/network_to_optim.py
+cost of 1 backward
+where
+G = partial Phi^top partial Phi
+
+
+compute the number of hidden neurons
+compute the matrix B (size of nb of parmeters times nb of hidden neurons) in a efficient way, sparse matrix with 2p non zeros coefficient swhere p is the nb of params of the network 
+compute_B_mlp in pathcond/network_to_optim.py
+different function for cnn or resnet or unet because need of finding for each hidden neurons shich parmaerws enters and which parmeetr go out
+
+
+
+update the duale variable v = Bu thanks to the algorihm pathcond 
+"update_z_polynomial" in the file pathcond/rescaling_polyn.py
+
+
+reweight the model ie applying the optimal rescaling accroding to our crieria
+reweight_model_in_place in pathcond/rescaling_polyn.py
+
+
+
+
+
 
 ## Results
 You can reproduce the results of our paper by running the following commands:

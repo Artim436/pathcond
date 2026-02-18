@@ -44,5 +44,5 @@ if __name__ == "__main__":
         data="cifar10",
         seed_nb=3,
         lrs=[0.001],
-        init_kai_normal=True
+        init_kai_normal=False
     )

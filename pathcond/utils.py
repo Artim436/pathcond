@@ -4,9 +4,24 @@ from typing import Optional, Callable, Dict, Tuple, Union
 from pathlib import Path
 from torchvision.models.resnet import BasicBlock
 
+class MLPCompatibilityWrapper(nn.Module):
+    def __init__(self, original_model):
+        super().__init__()
+        self.original_model = original_model
+        layers = []
+        linears = []
+        for m in original_model.modules():
+            if isinstance(m, nn.Linear):
+                layers.append(m)
+                linears.append(m)
+            elif isinstance(m, (nn.ReLU, nn.LeakyReLU, nn.Tanh, nn.Sigmoid)):
+                layers.append(m)
+        self.model = nn.Sequential(*layers)
+        self.input_dim = linears[0].in_features
+        self.output_dim = linears[-1].out_features
 
-from typing import Tuple, Union
-import torch.nn as nn
+    def forward(self, x):
+        return self.original_model(x)
 
 
 class DoubleConv(nn.Module):
@@ -41,7 +56,7 @@ def _get_first_parametric_layer(module: nn.Module) -> nn.Module:
 
 def get_model_input_size(
     model: nn.Module, 
-    default_image_hw: Tuple[int, int] = (224, 224)
+    default_image_hw: Tuple[int, int] = (32, 32)
 ) -> Union[Tuple[int, int], Tuple[int, int, int, int]]:
     """
     Determines the expected input size for a PyTorch model by inspecting its
@@ -62,7 +77,6 @@ def get_model_input_size(
         H, W = default_image_hw
         return (1, first_layer.in_channels, H, W)
 
-    # (Théoriquement inatteignable)
     raise ValueError(
         f"Unsupported layer type: {type(first_layer).__name__}"
     )

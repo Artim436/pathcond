@@ -8,6 +8,7 @@ from pathcond.utils import iter_modules_by_type, count_hidden_channels_generic, 
 from pathcond.network_to_optim import compute_diag_G, compute_B_mlp, compute_B_resnet, compute_B_full_conv, compute_B_resnet_c
 from torch import Tensor
 from typing import List, Tuple
+from pathcond.utils import MLPCompatibilityWrapper
 
 
 @torch.jit.script
@@ -147,6 +148,7 @@ def optimize_rescaling_polynomial(model, n_iter=10, tol=1e-6, resnet=False, enor
         diag_G = compute_diag_G(model).to(device=device, dtype=dtype)
     model_type = _detect_model_type(model)
     if model_type == "MLP":
+        model = MLPCompatibilityWrapper(model).to(device)
         linear_indices = [i for i, layer in enumerate(model.model) if isinstance(layer, nn.Linear)]
         n_hidden_neurons = sum(model.model[i].out_features for i in linear_indices[:-1])
         pos_cols, neg_cols = compute_B_mlp(model)

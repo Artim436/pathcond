@@ -6,13 +6,9 @@ def train_one_epoch(model, loader, criterion, optimizer, device, fraction: float
     total_loss = 0.0
     total_samples = 0
     max_batches = int(len(loader) * fraction)
-    
-    # Note: On ne fait plus model.to(device) ici, on suppose qu'il y est déjà.
-
     for i, (x, y) in enumerate(loader):
         if i >= max_batches:
             break
-        # Transfert asynchrone pour gagner un peu de temps sur GPU
         x, y = x.to(device), y.to(device)
        
         optimizer.zero_grad()
@@ -105,26 +101,6 @@ def evaluate(model, loader, device) -> float:
     return correct / total
 
 def rescaling_path_cond(model, nb_iter_optim_rescaling=10, device="cpu", data="moons", enorm=False, is_resnet_c=False) -> tuple[torch.nn.Module, torch.Tensor]:
-    shape_map = {"moons": (1, 2), "mnist": (1, 784), "cifar10": (1, 3, 32, 32), "mnist_enc_dec": (1, 784)}
-    if data not in shape_map:
-        raise NotImplementedError("Data not implemented")
-    
-    dummy_input = torch.randn(*shape_map[data], device=device)
-    model.eval()
-    with torch.no_grad():
-        orig_output = model(dummy_input)
-    
-    # On optimise
     BZ, Z = optimize_rescaling_polynomial(model, n_iter=nb_iter_optim_rescaling, tol=1e-2, enorm=enorm, resnet=is_resnet_c)
-    new_model = reweight_model(model, BZ, Z, enorm=enorm)
-    new_model.to(device) # Sécurité, mais devrait déjà y être
-    
-    with torch.no_grad():
-        new_output = new_model(dummy_input)
-    
-    # Vérification numérique
-    diff = torch.abs(orig_output - new_output).max()
-    if diff > 1e-2:
-        print(f"Warning: Outputs differ after rescaling! Max diff: {diff:.4f}")
-        
+    new_model = reweight_model(model, BZ, Z, enorm=enorm)  
     return new_model, Z
