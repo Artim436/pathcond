@@ -41,6 +41,10 @@ class MLP(nn.Sequential):
             x = x.view(x.size(0), -1)
         return self.model(x)
 
+    def reset_parameters(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight)
 
 class MLP_BN(nn.Sequential):
     def __init__(self, hidden_dims: List[int], seed: int = 0) -> None:
@@ -71,6 +75,10 @@ class MLP_BN(nn.Sequential):
             x = x.view(x.size(0), -1)
         return self.model(x)
     
+    def reset_parameters(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight)
 
 
 ## FUll conv pierre stock
