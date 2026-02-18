@@ -26,8 +26,6 @@ def train_loop(
     init_kai_normal = False,
     ):
     
-    # --- Configuration du Device ---
-    # Sur Moons (petit dataset), le CPU est souvent plus rapide car on évite la latence PCIe
     device = "cuda" if torch.cuda.is_available() else "cpu"
     
     # --- MLflow Configuration ---
@@ -35,8 +33,6 @@ def train_loop(
     mlflow.set_experiment(EXPERIMENT_NAME)
 
     torch.manual_seed(seed)
-
-    # --- Sélection du Modèle ---
     if isinstance(architecture, list):
         if data == "moons":
             if method.startswith("bn"):
