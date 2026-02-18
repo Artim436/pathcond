@@ -1,82 +1,199 @@
-# Path-conditioned training
-Pathcond is a principled and fast way to rescale ReLU neural netowrk at initialization. We show on several examples availale in this repo that rescale a MLP or a conv net at init  accelerates training and does not degrade generalization performance.
+# PathCond — Path-Conditioned Training
 
-This repository contains the implementation of Pathcond as detailed in our paper [Path-conditioned training: a principled way to rescale ReLU neural networks]. The library is easy to use.
+**PathCond** is a principled and computationally cheap method to rescale ReLU neural networks at initialization. A single call to `rescaling_path_cond` before the first gradient step improves the conditioning of the loss landscape, accelerating training convergence without degrading generalization performance.
 
+This repository contains the implementation described in our paper:
 
-## Dependencies
-todo
-`
-pip install -r requirements.txt
-`
-sachant que beaucoup de packages utiles pour suivre les expe ou plot mais en pratqiue besoin que de torch 
+> **Path-conditioned training: a principled way to rescale ReLU neural networks**  
+> *Arthur Lebeurrier, Titouan Vayer, Rémi Gribonval*  
+> [TODO: arXiv link]
 
+---
 
+## Table of contents
 
-## How to use Pathcond
+- [How it works](#how-it-works)
+- [Installation](#installation)
+- [Quick start](#quick-start)
+- [Reproducing the paper experiments](#reproducing-the-paper-experiments)
+- [Interactive demos](#interactive-demos)
+- [License](#license)
+- [Citation](#citation)
+<!-- - [Repository structure](#repository-structure) -->
 
-The training procedure consists in performing one pathcond rescaling at init.
+---
+
+## How it works
+
+For any ReLU network, there exist infinitely many weight configurations that compute *exactly* the same function. For a single hidden neuron with input weight $u$, output weight $v$, bias $b$, and a rescaling coefficient $\lambda > 0$:
+
+$$v \cdot \text{ReLU}(u x + b) = \frac{v}{\lambda} \cdot \text{ReLU}(\lambda u x + \lambda b)$$
+
+This leaves the network function **exactly unchanged** by ReLU positive homogeneity. PathCond chooses the scalings $\lambda$ to optimize a conditioning criterion.
+
+### The lifted perspective
+
+We consider a lifting of the network parameters, denoted $\Phi$, that is invariant under rescaling (like the network's realization map). Selecting an admissible rescaling corresponds to shaping the geometry of the optimization dynamics in this lifted space.
+
+Specifically, we seek the rescaling that best aligns the **path magnitude matrix** $G = \partial\Phi^\top \partial\Phi$ with the identity, by solving:
+
+$$\min_{D \in \mathcal{G},\; \alpha > 0} \; d_{-\!\log\det}\!\left(\alpha\, G_{D\theta} \,\Big\|\, I_p\right)$$
+
+where $d_{-\log\det}$ is the Bregman divergence induced by $\zeta(X) = -\log\det(X)$.
+
+### Algorithm
+
+1. **Compute** $\text{diag}(G)$ via a single backward pass.
+2. **Solve** the optimization problem to find the optimal rescalings (`update_z_polynomial`).
+3. **Apply** the rescaling in-place to the model weights (`reweight_model_in_place`).
+
+PathCond supports MLPs, convolutional networks, and more general architectures (see [our paper](#citation) for details).
+
+---
+
+## Installation
+
+**Requirements:** Python ≥ 3.9, PyTorch ≥ 2.0.
+
+```bash
+git clone https://github.com/[TODO: repo]/pathcond.git
+cd pathcond
+
+python3 -m venv venv
+source venv/bin/activate        # Windows: venv\Scripts\activate
+```
+
+Then install depending on your use case:
+
+```bash
+# Use PathCond in your own project — installs torch only
+pip install -e .
+
+# Reproduce the paper experiments — adds mlflow, tqdm, seaborn, scipy, ...
+pip install -e ".[expes]"
+
+# Run the demo notebooks — adds jupyter, scikit-learn, matplotlib, ...
+pip install -e ".[demo]"
+
+# Everything at once
+pip install -e ".[all]"
+```
+
+---
+
+## Quick start
+
 ```python
 from pathcond.pathcond import rescaling_path_cond
 
-
-# defining model and optimizer
-model = ...
+# Define your model, criterion, and optimizer as usual
+model     = ...
 criterion = ...
 optimizer = ...
 
-rescaling_path_cond(model_pathcond)
+# Apply PathCond once, before the first gradient step
+rescaling_path_cond(model)
 
-# training loop
-for batch, target in train_loader:
-  # forward pass
-  output = model(input)
-  loss = criterion(output, target)
-
-  # backward pass
-  optimizer.zero_grad()
-  loss.backward()
-
-  # SGD and ENorm steps
-  optimizer.step()
-  enorm.step()
+# Standard training loop — no other changes needed
+for inputs, targets in train_loader:
+    optimizer.zero_grad()
+    loss = criterion(model(inputs), targets)
+    loss.backward()
+    optimizer.step()
 ```
-Some precisions about the usage of PathCond (for details, see [our paper]()):
 
-process:
-diag_G = compute_diag_G(model) in pathcond/network_to_optim.py
-cost of 1 backward
-where
-G = partial Phi^top partial Phi
+PathCond is a **drop-in, minimal-overhead modification** of your initialization: it only touches the weights, leaves the realized function unchanged, and requires no modification to the training loop.
 
+---
 
-compute the number of hidden neurons
-compute the matrix B (size of nb of parmeters times nb of hidden neurons) in a efficient way, sparse matrix with 2p non zeros coefficient swhere p is the nb of params of the network 
-compute_B_mlp in pathcond/network_to_optim.py
-different function for cnn or resnet or unet because need of finding for each hidden neurons shich parmaerws enters and which parmeetr go out
+<!-- ## Repository structure
 
+```
+pathcond/
+├── pathcond/                    # Core library
+│   ├── pathcond.py              #   rescaling_path_cond       — main entry point
+│   ├── network_to_optim.py      #   compute_diag_G            — diagonal of G via one backward
+│   │                            #   compute_B_mlp / _conv     — sparse path-neuron matrix B
+│   ├── rescaling_polyn.py       #   update_z_polynomial       — dual variable solver
+│   │                            #   reweight_model_in_place   — applies optimal rescaling
+│   ├── models.py                #   model definitions used in experiments
+│   ├── data.py                  #   dataset utilities
+│   └── utils.py                 #   miscellaneous helpers
+├── expes/                       # Experiment scripts
+│   ├── run_expe_figure_2.py     #   run experiments for Figure 2
+│   ├── plot_figure_2.py         #   generate Figure 2
+│   ├── run_expe_figure_3.py     #   run experiments for Figure 3
+│   ├── plot_figure_3.py         #   generate Figure 3
+│   ├── training_utils.py        #   shared training utilities
+│   └── train_script.py          #   generic training script
+├── pathcond_demo.ipynb          # Demo — two moons (MLP)
+├── pathcond_cifar10_demo.ipynb  # Demo — CIFAR-10 (CIFAR-NV conv net)
+├── figures/                     # Output figures
+├── data/                        # Downloaded datasets (auto-populated)
+├── requirements.txt
+├── setup.py
+├── LICENSE
+└── README.md
+```
 
+--- -->
 
-update the duale variable v = Bu thanks to the algorihm pathcond 
-"update_z_polynomial" in the file pathcond/rescaling_polyn.py
+## Reproducing the paper experiments
 
+Experiments are tracked with [MLflow](https://mlflow.org/). Results are logged to `mlruns/` and can be browsed with:
 
-reweight the model ie applying the optimal rescaling accroding to our crieria
-reweight_model_in_place in pathcond/rescaling_polyn.py
+```bash
+mlflow ui
+```
 
+### Figure 2
 
+```bash
+python3 expes/run_expe_figure_2.py
+python3 expes/plot_figure_2.py
+```
 
+### Figure 3
 
+```bash
+python3 expes/run_expe_figure_3.py
+python3 expes/plot_figure_3.py
+```
 
+---
 
-## Results
-You can reproduce the results of our paper by running the following commands:
+## Interactive demos
 
-todo
+Two self-contained Jupyter notebooks provide a hands-on walkthrough of PathCond:
+
+| Notebook | Architecture | Task |
+|---|---|---|
+| [`pathcond_demo.ipynb`](pathcond_demo.ipynb) | MLP | Two Moons (2D) | 
+| [`pathcond_cifar10_demo.ipynb`](pathcond_cifar10_demo.ipynb) | CIFAR-NV (fully conv.) | CIFAR-10 |
+
+Launch with:
+
+```bash
+jupyter notebook
+```
+
+---
 
 ## License
-Pathcond is released under Creative Commons Attribution 4.0 International (CC BY 4.0) license, as found in the LICENSE file.
 
-## Bibliography
+PathCond is released under the [Creative Commons Attribution 4.0 International (CC BY 4.0)](LICENSE) license.
 
-todo
+---
+
+## Citation
+
+If you use PathCond in your research, please cite:
+
+```bibtex
+@article{lebeurrier2026pathcond,
+  title   = {Path-conditioned training: a principled way to rescale {ReLU} neural networks},
+  author  = {Lebeurrier, Arthur and Vayer, Titouan and Gribonval, R{\'e}mi},
+  year    = {2026},
+  url     = {[TODO: arXiv link]}
+}
+```

@@ -107,15 +107,10 @@ def count_hidden_channels_generic(model, module_type=None) -> int:
     """
     total_channels = 0
 
-    # 1. Utilisation de la fonction générique pour itérer sur tous les BasicBlock
     for name, block in iter_modules_by_type(model, module_type or BasicBlock):
-
-        # 2. Le reste de votre logique reste la même
-        #    'block' est ici l'instance de BasicBlock
         if hasattr(block, 'conv1') and isinstance(block.conv1, nn.Conv2d):
             total_channels += block.conv1.out_channels
         else:
-            # Sécurité si un bloc BasicBlock n'a pas l'attribut 'conv1'
             print(f"Avertissement: Le bloc {name} ne possède pas l'attribut 'conv1' de type Conv2d.")
 
     return total_channels
@@ -129,7 +124,6 @@ def count_hidden_channels_full_conv(model) -> int:
     sauf la dernière couche.
     """
     
-    # Extraire toutes les couches Conv2d dans l'ordre
     conv_layers = []
     for name, module in model.named_modules():
         if isinstance(module, nn.Conv2d):

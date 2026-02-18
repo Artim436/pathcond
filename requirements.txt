@@ -1,0 +1,15 @@
+# ── Core (required to use PathCond) ──────────────────────────────────────────
+torch>=2.0.0
+numpy>=1.24.0
+
+# ── Experiments & figure reproduction ────────────────────────────────────────
+torchvision>=0.15.0
+mlflow>=2.10.0
+tqdm>=4.65.0
+seaborn>=0.12.0
+matplotlib>=3.7.0
+scikit-learn>=1.2.0
+
+# ── Interactive demos (Jupyter notebooks) ────────────────────────────────────
+jupyter>=1.0.0
+ipykernel>=6.0.0
