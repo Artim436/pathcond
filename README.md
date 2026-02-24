@@ -6,7 +6,7 @@ This repository contains the implementation described in our paper:
 
 > **Path-conditioned training: a principled way to rescale ReLU neural networks**  
 > *Arthur Lebeurrier, Titouan Vayer, Rémi Gribonval*  
-> [TODO: arXiv link]
+> [[arXiv link](https://arxiv.org/abs/2602.19799)]
 
 ---
 
@@ -190,6 +190,6 @@ If you use PathCond in your research, please cite:
   title   = {Path-conditioned training: a principled way to rescale {ReLU} neural networks},
   author  = {Lebeurrier, Arthur and Vayer, Titouan and Gribonval, R{\'e}mi},
   year    = {2026},
-  url     = {[TODO: arXiv link]}
+  url     = {https://arxiv.org/abs/2602.19799}
 }
 ```
